@@ -1,0 +1,149 @@
+body,
+html {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    font-size: 15px;
+    overflow: hidden;
+    font-family: 'Roboto', sans-serif;
+    background-color: rgb(36, 63, 76);
+}
+
+textarea,
+select,
+input,
+button {
+    outline: none;
+}
+
+#map {
+    width: 100%;
+    height: 100%;
+    top: 0px;
+    left: 0px;
+    position: absolute;
+}
+
+.logo {
+    width: 80px;
+}
+
+.box {
+    z-index: 10;
+    background: #111f28;
+    color: white;
+    display: flex;
+    flex-direction: column;
+}
+
+.green-left {
+    border-left: 2px solid #a2d036;
+}
+
+.box.quarter {
+    width: 25%;
+}
+
+.box.left {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    bottom: 15px;
+}
+
+.box.right {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    bottom: 15px;
+}
+
+.box>.masthead {
+    background: #0b171d;
+    color: white;
+    padding: 25px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.box>.info {
+    background: #162833;
+    color: #fff;
+    font-size: 12px;
+    margin: 10px;
+    padding: 15px;
+}
+
+.box>.messages {
+    overflow-y: auto;
+    padding: 10px 15px;
+}
+
+.box>.input {
+    border: 0;
+    font-size: 15px;
+    padding: 15px 20px;
+    margin: 10px;
+    background-color: #0b171d;
+    color: white;
+    bottom: 15px;
+}
+
+::placeholder {
+    /* Chrome, Firefox, Opera, Safari 10.1+ */
+    color: white;
+    opacity: 1;
+    /* Firefox */
+}
+
+.marker {
+    background-color: rgba(18, 157, 212, 0.7);
+    background-size: cover;
+    width: 24px;
+    height: 24px;
+    border: 3px solid white;
+    border-radius: 50%;
+    box-sizing: border-box;
+}
+
+#marker-dot {
+    background-color: white;
+    background-size: cover;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-top: 27px;
+    margin-left: 94px;
+    position: absolute;
+    opacity: 0;
+}
+
+.marker input {
+    color: black;
+    text-align: center;
+    background: transparent;
+    text-shadow: -1px 0 white, 0 1px white, 1px 0 white, 0 -1px white;
+    border: 0;
+    width: 200px;
+    height: 28px;
+    font-size: 15px;
+    position: relative;
+    left: -92px;
+    top: -30px;
+}
+
+.marker div {
+    color: black;
+    text-align: center;
+    background: transparent;
+    text-shadow: -1px 0 white, 0 1px white, 1px 0 white, 0 -1px white;
+    border: 0;
+    width: 200px;
+    height: 28px;
+    font-size: 15px;
+    position: relative;
+    left: -90px;
+    top: -23px;
+}
