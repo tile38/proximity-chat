@@ -69,6 +69,7 @@ map.on('load', function () {
     map.on('zoom', onmap);
 
     marker = makeMarker(true, me);
+    renderCircle(me, '#a2d036');
     marker.addTo(map);
     marker.on('drag', function () {
         me.geometry.coordinates = [marker.getLngLat().lng, marker.getLngLat().lat];
@@ -91,9 +92,8 @@ function renderCircle(person, color) {
     renderLayer(person.properties.id, circle, color);
 }
 
-// renderLayer takes an identifier name, coordinates of
-// a bounded geofence and a color and renders both a fill
-// and border line on the map
+// renderLayer takes an identifier name, coordinates of a bounded geofence and a
+// color and renders both a fill and border line on the map
 function renderLayer(name, feature, color, outline) {
     if (map.getSource(name + '-fill') != undefined) {
         map.getSource(name + '-fill').setData(feature);
@@ -136,13 +136,14 @@ function renderLayer(name, feature, color, outline) {
     }
 }
 
-// openWS creates a websocket connection to our GO geolocation 
-// service
+// openWS creates a websocket connection to our GO geolocation service
 function openWS() {
     ws = new WebSocket('ws://' + location.host + '/ws');
     ws.onopen = function () {
         connected = true;
-        ws.send('{"type":"ID"}');
+        ws.send(JSON.stringify({
+            type: "ID",
+        }));
         storeMe();
         setInterval(function () {
             storeMe()
@@ -205,7 +206,6 @@ function openWS() {
                 break;
             default:
                 if (msg.type == 'ID') {
-                    console.log(me.properties.id);
                     me.properties.id = msg.id;
                     storeMe();
                 }
@@ -221,8 +221,8 @@ function openWS() {
     }
 }
 
-// getMe attempts to retrieve a previously stored location 
-// from memory, otherwise it generates and sets a new one
+// getMe attempts to retrieve a previously stored location from sessionStorage, 
+// otherwise it generates and sets a new one
 function getMe() {
     me = JSON.parse(sessionStorage.getItem('location'));
 
@@ -250,8 +250,8 @@ function getMe() {
     }
 }
 
-// storeMe stores our current location in localstorage and 
-// broadcasts it to the websocket server
+// storeMe stores our current location in sessionStorage and broadcasts it to 
+// the websocket server
 function storeMe() {
     let memsg = JSON.stringify(me);
     sessionStorage.setItem('location', memsg);
@@ -265,11 +265,10 @@ function calcNearby() {
     let linked;
     for (hash in markers) {
         pmarker = markers[hash];
-        // let meters = distance(pmarker, marker);
-        let meters = 5;
+        let meters = distance(pmarker, marker);
         let layerName = 'l:' + hash;
         let sourceName = 's:' + hash;
-        if (meters < 500) {
+        if (meters < 100) {
             let data = {
                 'type': 'Feature',
                 'properties': {},
@@ -365,8 +364,7 @@ function makeMarker(isme, person) {
     return marker;
 }
 
-// notify places a greyed out italics message in the chat box 
-// notifying the user
+// notify places a greyed out italics message in the chat box notifying the user
 function notify(message) {
     let messageDiv = document.createElement('div');
     messageDiv.innerHTML = '<a style="font-style:italic;opacity:0.5">' +
@@ -378,8 +376,7 @@ function notify(message) {
     chatArea.appendChild(messageDiv);
 }
 
-// updateChat updates the chat box to contain any new messages 
-// received
+// updateChat updates the chat box to contain any new messages received
 function updateChat(message) {
     // TODO Disallow innerHTML because users will inject HTML links into chat
     let messageDiv = document.createElement('div');
