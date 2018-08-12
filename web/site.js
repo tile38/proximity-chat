@@ -22,8 +22,7 @@ getMe();
 // Continuously update interpolated info fields
 window.setInterval(function () {
     document.getElementById('name').innerText = 'Name : ' + me.properties.name;
-    document.getElementById('privid').innerText = 'Private ID : ' + me.properties.id;
-    document.getElementById('pubid').innerText = 'Public ID : ' + md5(me.properties.id);
+    document.getElementById('clientid').innerText = 'Client ID : ' + me.properties.id;
     document.getElementById('position').innerText = 'Position : ' + me.geometry.coordinates;
 }, 10);
 
@@ -143,6 +142,7 @@ function openWS() {
     ws = new WebSocket('ws://' + location.host + '/ws');
     ws.onopen = function () {
         connected = true;
+        ws.send('{"type":"ID"}');
         storeMe();
         setInterval(function () {
             storeMe()
@@ -160,7 +160,7 @@ function openWS() {
         console.log(msg);
 
         // Ignore messages about ourself
-        if (msg.id == md5(me.properties.id)) {
+        if (msg.id == me.properties.id) {
             if (msg.command == 'set' && msg.properties) {
                 if (msg.detect == 'enter') {
                     notify('You have entered : ' + msg.properties.name);
@@ -204,6 +204,11 @@ function openWS() {
                 }
                 break;
             default:
+                if (msg.type == 'ID') {
+                    console.log(me.properties.id);
+                    me.properties.id = msg.id;
+                    storeMe();
+                }
                 if (msg.type == 'Feature' && msg.geometry.type == 'Polygon') {
                     renderLayer(msg.properties.id, msg, '#a22427', true);
                 }
@@ -231,7 +236,7 @@ function getMe() {
                 ]
             },
             properties: {
-                id: md5((Math.random()).toString(16).slice(2)),
+                id: 'Unknown',
                 color: 'rgba(' +
                     Math.floor(Math.random() * 128 + 128) + ',' +
                     Math.floor(Math.random() * 128 + 128) + ',' +

@@ -1,11 +1,9 @@
 package main
 
 import (
-	"crypto/md5"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -34,9 +32,10 @@ func main() {
 	// Create the websocket server and bind all message handlers
 	srv = gows.New("/ws")
 	srv.Static("/", "web")
-	srv.Handle("Places", places)
-	srv.Handle("Feature", feature)
-	srv.Handle("Message", message)
+	srv.Handle("ID", id)           // Handle messages for the users ID
+	srv.Handle("Places", places)   // Handle messages for geofences and objects
+	srv.Handle("Feature", feature) // Handle messages about feature updates
+	srv.Handle("Message", message) // Handle messages about chat messages
 
 	// Create an object and geofence for the Convention Center
 	cc := readFence("convention-center")
@@ -44,7 +43,7 @@ func main() {
 	go watch(gjson.Get(cc, "properties").String(), "WITHIN", group, "FENCE",
 		"DETECT", "enter,exit", "OBJECT", cc)
 
-	// Create and object and geofence for the Hyatt Regency
+	// Create an object and geofence for the Hyatt Regency
 	h := readFence("hyatt")
 	redisDo("SET", "places", "hyatt", "OBJECT", h)
 	go watch(gjson.Get(h, "properties").String(), "WITHIN", group, "FENCE",
@@ -60,16 +59,15 @@ func main() {
 	log.Println(srv.Listen(":8000"))
 }
 
-// watch continuously subscribes and listens for geofence notifications from
-// Tile38
+// watch continuously subscribes and listens for geofence notifications
 func watch(prop string, cmd string, args ...interface{}) {
 	for {
 		subscribe(prop, cmd, args...)
 	}
 }
 
-// subscribe will listen for geofence notifications from Tile38, piping all
-// notifications out to all connected websocket clients
+// subscribe will listen for geofence notifications, piping all notifications
+// out to all connected websocket clients
 func subscribe(prop string, cmd string, args ...interface{}) {
 	conn := pool.Get()
 	defer conn.Close()
@@ -88,9 +86,6 @@ func subscribe(prop string, cmd string, args ...interface{}) {
 		}
 
 		srv.Conns.Range(func(_ string, ws *websocket.Conn) {
-			id := gjson.Get(msg, "id").String()
-			idMD5 := fmt.Sprintf("%x", md5.Sum([]byte(id)))
-			msg := strings.Replace(msg, id, idMD5, -1)
 			if prop != "" {
 				msg, _ = sjson.SetRaw(msg, "properties", prop)
 			}
@@ -99,11 +94,19 @@ func subscribe(prop string, cmd string, args ...interface{}) {
 	}
 }
 
+// id is a basic websocket message handler that returns the connections ID back
+// to the messager
+func id(c gows.Context) error {
+	return c.Send(fmt.Sprintf(`{"type":"ID","id":"%s"}`, c.ConnID()))
+}
+
+// places is a websocket message handler that retrieves all objects/polygons
+// in the Tile38 database and returns writes them to the messager
 func places(c gows.Context) error {
 	// SCAN all places in Tile38
 	places, err := redis.Values(redisDo("SCAN", "places"))
 	if err != nil {
-		log.Println("places: %v", err)
+		log.Printf("places: %v\n", err)
 		return nil
 	}
 
@@ -117,13 +120,15 @@ func places(c gows.Context) error {
 	return nil
 }
 
-// feature creates/updates a points location in Tile38, keyed by the ID in the
-// message
+// feature is a websocket message handler that creates/updates a points location
+// in Tile38, keyed by the ID in the message
 func feature(c gows.Context) error {
 	redisDo("SET", group, c.ConnID(), "EX", 5, "OBJECT", c.Message())
 	return nil
 }
 
+// message is a websocket message handler that queries Tile38 for other users
+// located in the messagers geofence and broadcasts a chat message to them
 func message(c gows.Context) error {
 	feature := gjson.Get(c.Message(), "feature").String()
 
@@ -132,7 +137,7 @@ func message(c gows.Context) error {
 		gjson.Get(feature, "geometry.coordinates.0").Float(),
 		gjson.Get(feature, "geometry.coordinates.1").Float())
 	if err != nil {
-		log.Println("connected-clients: %v", err)
+		log.Printf("connected-clients: %v\n", err)
 		return nil
 	}
 
@@ -148,6 +153,8 @@ func message(c gows.Context) error {
 	return nil
 }
 
+// connectedClients queries Tile38 for any users located in the same geofence
+// as the messager located at the x and y coordinates passed
 func connectedClients(x, y float64) (map[string][]string, error) {
 	// map of person ID to a slice of connected geo-fences
 	idMap := make(map[string][]string)

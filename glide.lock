@@ -1,5 +1,5 @@
 hash: 808fc4b81540640ca6294a6cbfd815f1cc83cdb192abf6eb90a4f33c37c456df
-updated: 2018-08-11T15:07:06.939883-07:00
+updated: 2018-08-11T17:32:18.373324-07:00
 imports:
 - name: github.com/gomodule/redigo
   version: 2cd21d9966bf7ff9ae091419744f0b3fb0fecace
@@ -21,5 +21,5 @@ imports:
 - name: github.com/tidwall/sjson
   version: 6a22caf2fd45d5e2119bfc3717e984f15a7eb7ee
 - name: github.com/tile38/gows
-  version: 1863a6ae6ed37a5d212c9959f74f017ab16ff39d
+  version: 9cae3f526ca4069cefda56cd9824fab188be5c32
 testImports: []
