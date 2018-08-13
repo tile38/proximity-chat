@@ -7,17 +7,16 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
-	"github.com/gorilla/websocket"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
-	"github.com/tile38/gows"
+	"github.com/tile38/msgkit"
 )
 
 const dist = 100
 const group = "people"
 
-var pool *redis.Pool // The Tile38 connection pool
-var srv *gows.Server // The websocket server
+var pool *redis.Pool   // The Tile38 connection pool
+var srv *msgkit.Server // The websocket server
 
 func main() {
 	// Create a new pool of connections to Tile38
@@ -30,7 +29,7 @@ func main() {
 	}
 
 	// Create the websocket server and bind all message handlers
-	srv = gows.New("/ws")
+	srv = msgkit.New("/ws")
 	srv.Static("/", "web")
 	srv.Handle("ID", id)           // Handle messages for the users ID
 	srv.Handle("Places", places)   // Handle messages for geofences and objects
@@ -85,24 +84,26 @@ func subscribe(prop string, cmd string, args ...interface{}) {
 			return
 		}
 
-		srv.Conns.Range(func(_ string, ws *websocket.Conn) {
+		for _, id := range srv.ConnIDs() {
 			if prop != "" {
 				msg, _ = sjson.SetRaw(msg, "properties", prop)
 			}
-			ws.WriteMessage(websocket.TextMessage, []byte(msg))
-		})
+			if c, ok := srv.Conns.Get(id); ok {
+				c.Send(msg)
+			}
+		}
 	}
 }
 
 // id is a basic websocket message handler that returns the connections ID back
 // to the messager
-func id(c gows.Context) error {
-	return c.Send(fmt.Sprintf(`{"type":"ID","id":"%s"}`, c.ConnID()))
+func id(c *msgkit.Context) error {
+	return c.Conn.Send(fmt.Sprintf(`{"type":"ID","id":"%s"}`, c.ConnID))
 }
 
 // places is a websocket message handler that retrieves all objects/polygons
 // in the Tile38 database and returns writes them to the messager
-func places(c gows.Context) error {
+func places(c *msgkit.Context) error {
 	// SCAN all places in Tile38
 	places, err := redis.Values(redisDo("SCAN", "places"))
 	if err != nil {
@@ -114,7 +115,7 @@ func places(c gows.Context) error {
 		ps, _ := redis.Values(places[1], nil)
 		for _, p := range ps {
 			kv, _ := redis.ByteSlices(p, nil)
-			c.Send(string(kv[1]))
+			c.Conn.Send(string(kv[1]))
 		}
 	}
 	return nil
@@ -122,15 +123,15 @@ func places(c gows.Context) error {
 
 // feature is a websocket message handler that creates/updates a points location
 // in Tile38, keyed by the ID in the message
-func feature(c gows.Context) error {
-	redisDo("SET", group, c.ConnID(), "EX", 5, "OBJECT", c.Message())
+func feature(c *msgkit.Context) error {
+	redisDo("SET", group, c.ConnID, "EX", 5, "OBJECT", c.Message)
 	return nil
 }
 
 // message is a websocket message handler that queries Tile38 for other users
 // located in the messagers geofence and broadcasts a chat message to them
-func message(c gows.Context) error {
-	feature := gjson.Get(c.Message(), "feature").String()
+func message(c *msgkit.Context) error {
+	feature := gjson.GetBytes(c.Message, "feature").String()
 
 	// Get the connected clients from Tile38
 	cc, err := connectedClients(
@@ -141,15 +142,13 @@ func message(c gows.Context) error {
 		return nil
 	}
 
-	srv.Conns.Range(func(connID string, ws *websocket.Conn) {
-		for ccID := range cc {
-			if connID == ccID {
-				newMsg, _ := sjson.Set(c.Message(), "feature.properties.via",
-					cc[ccID])
-				ws.WriteMessage(websocket.TextMessage, []byte(newMsg))
-			}
+	for cid, places := range cc {
+		if ws, ok := srv.Conns.Get(cid); ok {
+			newMsg, _ := sjson.SetBytes(c.Message, "feature.properties.via",
+				places)
+			ws.Send(string(newMsg))
 		}
-	})
+	}
 	return nil
 }
 
