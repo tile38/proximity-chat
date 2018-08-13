@@ -378,18 +378,13 @@ function notify(message) {
 
 // updateChat updates the chat box to contain any new messages received
 function updateChat(message) {
-    // TODO Disallow innerHTML because users will inject HTML links into chat
     let messageDiv = document.createElement('div');
-    messageDiv.innerHTML = '<b style="color:' +
-        message.feature.properties.color +
-        ';">' +
-        message.feature.properties.name +
-        '</b> via (' +
-        message.feature.properties.via +
-        ') : ' +
-        message.text +
-        '</div>';
-
+    let b = document.createElement('b');
+    b.style = "color:" + message.feature.properties.color + ";";
+    b.innerText = message.feature.properties.name;
+    messageDiv.appendChild(b);
+    messageDiv.insertAdjacentText('beforeend', ' via (' +
+        message.feature.properties.via + ') : ' + message.text);
     let chatArea = document.getElementById('chat-messages');
     chatArea.scrollTop = chatArea.scrollHeight - chatArea.clientHeight;
     chatArea.appendChild(messageDiv);
@@ -410,14 +405,16 @@ function distance(latA, lonA, latB, lonB) {
     // see mathforum.org/library/drmath/view/51879.html for derivation
 
     var R = 6371e3;
-    var φ1 = latA * Math.PI / 180, λ1 = lonA * Math.PI / 180;
-    var φ2 = latB * Math.PI / 180, λ2 = lonB * Math.PI / 180;
+    var φ1 = latA * Math.PI / 180,
+        λ1 = lonA * Math.PI / 180;
+    var φ2 = latB * Math.PI / 180,
+        λ2 = lonB * Math.PI / 180;
     var Δφ = φ2 - φ1;
     var Δλ = λ2 - λ1;
 
-    var a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2)
-        + Math.cos(φ1) * Math.cos(φ2)
-        * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    var a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+        Math.cos(φ1) * Math.cos(φ2) *
+        Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
     var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     var d = R * c;
 
