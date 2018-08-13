@@ -15,8 +15,8 @@ import (
 const dist = 100
 const group = "people"
 
-var pool *redis.Pool   // The Tile38 connection pool
 var srv *msgkit.Server // The websocket server
+var pool *redis.Pool   // The Tile38 connection pool
 
 func main() {
 	// Create a new pool of connections to Tile38
@@ -36,26 +36,36 @@ func main() {
 	srv.Handle("Feature", feature) // Handle messages about feature updates
 	srv.Handle("Message", message) // Handle messages about chat messages
 
-	// Create an object and geofence for the Convention Center
-	cc := readFence("convention-center")
-	redisDo("SET", "places", "convention-center", "OBJECT", cc)
-	go watch(gjson.Get(cc, "properties").String(), "WITHIN", group, "FENCE",
-		"DETECT", "enter,exit", "OBJECT", cc)
-
-	// Create an object and geofence for the Hyatt Regency
-	h := readFence("hyatt")
-	redisDo("SET", "places", "hyatt", "OBJECT", h)
-	go watch(gjson.Get(h, "properties").String(), "WITHIN", group, "FENCE",
-		"DETECT", "enter,exit", "OBJECT", h)
-
-	// Create a geofence for all movements all over the world
+	// Create a geofence for all movements around the world
 	go watch("", "INTERSECTS", group, "FENCE", "BOUNDS", -90, -180, 90, 180)
 
-	// Create a roaming geofence for all points
+	// Create an object and geofence for the Convention Center
+	createFence("convention-center")
+
+	// Create an object and geofence for the Hyatt Regency
+	createFence("hyatt-regency")
+
+	// Create a roaming geofence for every person
 	go watch("", "NEARBY", group, "FENCE", "ROAM", group, "*", dist)
 
 	// Start listening for websocket messages
 	log.Println(srv.Listen(":8000"))
+}
+
+// createFence reads a local geojson file, creates a place object so it is
+// viewable on a map, and watches for enters or exits in the area
+func createFence(name string) {
+	gj, err := ioutil.ReadFile("fences/" + name + ".geo.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create a place object with the geojson
+	redisDo("SET", "places", name, "OBJECT", string(gj))
+
+	// Watch a static geofence in the geojsons area
+	go watch(gjson.GetBytes(gj, "properties").String(), "WITHIN", group,
+		"FENCE", "DETECT", "enter,exit", "OBJECT", string(gj))
 }
 
 // watch continuously subscribes and listens for geofence notifications
@@ -84,10 +94,11 @@ func subscribe(prop string, cmd string, args ...interface{}) {
 			return
 		}
 
-		for _, id := range srv.ConnIDs() {
-			if prop != "" {
-				msg, _ = sjson.SetRaw(msg, "properties", prop)
-			}
+		if prop != "" {
+			msg, _ = sjson.SetRaw(msg, "properties", prop)
+		}
+
+		for _, id := range srv.Conns.IDs() {
 			if c, ok := srv.Conns.Get(id); ok {
 				c.Send(msg)
 			}
@@ -102,13 +113,13 @@ func id(c *msgkit.Context) error {
 }
 
 // places is a websocket message handler that retrieves all objects/polygons
-// in the Tile38 database and returns writes them to the messager
+// in the Tile38 database and writes them to the messager
 func places(c *msgkit.Context) error {
 	// SCAN all places in Tile38
 	places, err := redis.Values(redisDo("SCAN", "places"))
 	if err != nil {
 		log.Printf("places: %v\n", err)
-		return nil
+		return err
 	}
 
 	if len(places) > 1 {
@@ -124,8 +135,8 @@ func places(c *msgkit.Context) error {
 // feature is a websocket message handler that creates/updates a points location
 // in Tile38, keyed by the ID in the message
 func feature(c *msgkit.Context) error {
-	redisDo("SET", group, c.ConnID, "EX", 5, "OBJECT", c.Message)
-	return nil
+	_, err := redisDo("SET", group, c.ConnID, "EX", 5, "OBJECT", c.Message)
+	return err
 }
 
 // message is a websocket message handler that queries Tile38 for other users
@@ -139,7 +150,7 @@ func message(c *msgkit.Context) error {
 		gjson.Get(feature, "geometry.coordinates.1").Float())
 	if err != nil {
 		log.Printf("connected-clients: %v\n", err)
-		return nil
+		return err
 	}
 
 	for cid, places := range cc {
@@ -199,14 +210,4 @@ func redisDo(cmd string, args ...interface{}) (interface{}, error) {
 	conn := pool.Get()
 	defer conn.Close()
 	return conn.Do(cmd, args...)
-}
-
-// readFence reads the geofence Feature data from the fences directory and
-// returns the contents of the file
-func readFence(filename string) string {
-	gj, err := ioutil.ReadFile("fences/" + filename + ".geo.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-	return string(gj)
 }
