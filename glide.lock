@@ -1,5 +1,5 @@
 hash: 808fc4b81540640ca6294a6cbfd815f1cc83cdb192abf6eb90a4f33c37c456df
-updated: 2018-08-14T11:50:04.228534-07:00
+updated: 2018-08-14T13:26:30.026733-07:00
 imports:
 - name: github.com/gomodule/redigo
   version: 2cd21d9966bf7ff9ae091419744f0b3fb0fecace
