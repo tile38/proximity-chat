@@ -14,7 +14,6 @@ import (
 )
 
 const dist = 100
-const group = "people"
 
 var srv *msgkit.Server // The websocket server
 var pool *redis.Pool   // The Tile38 connection pool
@@ -45,16 +44,16 @@ func main() {
 		// Create an object in Tile38 so we can view the static fences and
 		// create the static geofence bound to a channel
 		redisDo("SET", "places", place, "OBJECT", string(gj))
-		redisDo("SETCHAN", place, "WITHIN", group, "FENCE", "DETECT",
+		redisDo("SETCHAN", place, "WITHIN", "people", "FENCE", "DETECT",
 			"enter,exit", "OBJECT", string(gj))
 	}
 
 	// TODO REMOVE WORLD CHANGES IN FAVOR OF VIEWPORT CHANGES
-	redisDo("SETCHAN", "world", "INTERSECTS", group, "FENCE", "BOUNDS", -90,
+	redisDo("SETCHAN", "world", "INTERSECTS", "people", "FENCE", "BOUNDS", -90,
 		-180, 90, 180)
 
 	// Create a roaming geofence for all people and bind it to a channel
-	redisDo("SETCHAN", "roaming", "NEARBY", group, "FENCE", "ROAM", group, "*",
+	redisDo("SETCHAN", "roaming", "NEARBY", "people", "FENCE", "ROAM", "people", "*",
 		dist)
 
 	// Subscribe to
@@ -93,7 +92,7 @@ func psubscribe(props map[string]string) {
 			}
 		case error:
 			log.Println(v)
-			return
+			continue
 		}
 	}
 }
@@ -124,13 +123,13 @@ func onOpen(connID string, conn *safews.Conn) {
 // onCLose deletes the client from Tile38 when the websocket connection is
 // closed
 func onClose(connID string, conn *safews.Conn) {
-	redisDo("DEL", group, connID)
+	redisDo("DEL", "people", connID)
 }
 
 // feature is a websocket message handler that creates/updates a points location
 // in Tile38, keyed by the ID in the message
 func feature(c *msgkit.Context) {
-	redisDo("SET", group, c.ConnID, "EX", 5, "OBJECT", c.Message)
+	redisDo("SET", "people", c.ConnID, "EX", 5, "OBJECT", c.Message)
 }
 
 // message is a websocket message handler that queries Tile38 for other users
@@ -186,7 +185,7 @@ func connectedClients(x, y float64) (map[string][]string, error) {
 	}
 
 	// Get all nearby people
-	nearbyRes, err := redis.Values(redisDo("NEARBY", group, "IDS", "POINT", y,
+	nearbyRes, err := redis.Values(redisDo("NEARBY", "people", "IDS", "POINT", y,
 		x, dist))
 	if err != nil {
 		return nil, err
