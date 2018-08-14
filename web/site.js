@@ -15,8 +15,6 @@ let chatInput = document.getElementById('chat-input');
 
 // ------ Main ------
 
-// Form a new websocket connection and retrieve our stored location
-openWS();
 getMe();
 
 // Continuously update interpolated info fields
@@ -54,10 +52,8 @@ let map = new mapboxgl.Map({
 
 // Set the maps on load functionality
 map.on('load', function () {
-    // Request all places currently in Tile38
-    ws.send(JSON.stringify({
-        type: 'Places'
-    }));
+    // Form a new websocket connection
+    openWS();
 
     // Track map position and zoom
     let onmap = function () {
@@ -78,6 +74,7 @@ map.on('load', function () {
         calcNearby();
     });
 })
+
 
 // ------ Functions ------
 
@@ -141,9 +138,6 @@ function openWS() {
     ws = new WebSocket('ws://' + location.host + '/ws');
     ws.onopen = function () {
         connected = true;
-        ws.send(JSON.stringify({
-            type: "ID",
-        }));
         storeMe();
         setInterval(function () {
             storeMe()

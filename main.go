@@ -10,6 +10,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"github.com/tile38/msgkit"
+	"github.com/tile38/msgkit/safews"
 )
 
 const dist = 100
@@ -28,11 +29,10 @@ func main() {
 		},
 	}
 
-	// Create the websocket server and bind all message handlers
-	srv = msgkit.New("/ws")
-	srv.Static("/", "web")
-	srv.Handle("ID", id)           // Handle messages for the users ID
-	srv.Handle("Places", places)   // Handle messages for geofences and objects
+	srv = msgkit.New("/ws")        // Initialize a new msgkit server
+	srv.Static("/", "web")         // Bind the static web server
+	srv.OnOpen(onOpen)             // Handle Connection opened events
+	srv.OnClose(onClose)           // Handle Connection closed events
 	srv.Handle("Feature", feature) // Handle messages about feature updates
 	srv.Handle("Message", message) // Handle messages about chat messages
 
@@ -40,10 +40,10 @@ func main() {
 	go watch("", "INTERSECTS", group, "FENCE", "BOUNDS", -90, -180, 90, 180)
 
 	// Create an object and geofence for the Convention Center
-	createFence("convention-center")
+	createStaticFence("convention-center")
 
 	// Create an object and geofence for the Hyatt Regency
-	createFence("hyatt-regency")
+	createStaticFence("hyatt-regency")
 
 	// Create a roaming geofence for every person
 	go watch("", "NEARBY", group, "FENCE", "ROAM", group, "*", dist)
@@ -52,9 +52,9 @@ func main() {
 	log.Println(srv.Listen(":8000"))
 }
 
-// createFence reads a local geojson file, creates a place object so it is
+// createStaticFence reads a local geojson file, creates a place object so it is
 // viewable on a map, and watches for enters or exits in the area
-func createFence(name string) {
+func createStaticFence(name string) {
 	gj, err := ioutil.ReadFile("fences/" + name + ".geo.json")
 	if err != nil {
 		log.Fatal(err)
@@ -75,12 +75,13 @@ func watch(prop string, cmd string, args ...interface{}) {
 	}
 }
 
-// subscribe will listen for geofence notifications, piping all notifications
-// out to all connected websocket clients
+// subscribe listens for all geofence notifications, piping them out to all
+// connected websocket clients
 func subscribe(prop string, cmd string, args ...interface{}) {
 	conn := pool.Get()
 	defer conn.Close()
 
+	// Create subscription with Tile38 Fence command
 	resp, err := redis.String(conn.Do(cmd, args...))
 	if err != nil || resp != "OK" {
 		log.Printf("watch: %v", err)
@@ -88,16 +89,19 @@ func subscribe(prop string, cmd string, args ...interface{}) {
 	}
 
 	for {
+		// Read a message from the connection
 		msg, err := redis.String(conn.Receive())
 		if err != nil {
 			log.Printf("watch: %v", err)
 			return
 		}
 
+		// Add any custom properties to the payload
 		if prop != "" {
 			msg, _ = sjson.SetRaw(msg, "properties", prop)
 		}
 
+		// Forward the message from Tile38 to all connected websocket clients
 		for _, id := range srv.Conns.IDs() {
 			if c, ok := srv.Conns.Get(id); ok {
 				c.Send(msg)
@@ -106,42 +110,44 @@ func subscribe(prop string, cmd string, args ...interface{}) {
 	}
 }
 
-// id is a basic websocket message handler that returns the connections ID back
-// to the messager
-func id(c *msgkit.Context) error {
-	return c.Conn.Send(fmt.Sprintf(`{"type":"ID","id":"%s"}`, c.ConnID))
-}
+// onOpen is an EventHandler that sends the clients ID and all places to the
+// client as soon as they connect
+func onOpen(connID string, conn *safews.Conn) {
+	// Send the client their ID
+	conn.Send(fmt.Sprintf(`{"type":"ID","id":"%s"}`, connID))
 
-// places is a websocket message handler that retrieves all objects/polygons
-// in the Tile38 database and writes them to the messager
-func places(c *msgkit.Context) error {
 	// SCAN all places in Tile38
 	places, err := redis.Values(redisDo("SCAN", "places"))
 	if err != nil {
 		log.Printf("places: %v\n", err)
-		return err
+		return
 	}
 
+	// Parse the slice of places and send it to the messager
 	if len(places) > 1 {
 		ps, _ := redis.Values(places[1], nil)
 		for _, p := range ps {
 			kv, _ := redis.ByteSlices(p, nil)
-			c.Conn.Send(string(kv[1]))
+			conn.Send(string(kv[1]))
 		}
 	}
-	return nil
+}
+
+// onCLose deletes the client from Tile38 when the websocket connection is
+// closed
+func onClose(connID string, conn *safews.Conn) {
+	redisDo("DEL", group, connID)
 }
 
 // feature is a websocket message handler that creates/updates a points location
 // in Tile38, keyed by the ID in the message
-func feature(c *msgkit.Context) error {
-	_, err := redisDo("SET", group, c.ConnID, "EX", 5, "OBJECT", c.Message)
-	return err
+func feature(c *msgkit.Context) {
+	redisDo("SET", group, c.ConnID, "EX", 5, "OBJECT", c.Message)
 }
 
 // message is a websocket message handler that queries Tile38 for other users
 // located in the messagers geofence and broadcasts a chat message to them
-func message(c *msgkit.Context) error {
+func message(c *msgkit.Context) {
 	feature := gjson.GetBytes(c.Message, "feature").String()
 
 	// Get the connected clients from Tile38
@@ -150,7 +156,7 @@ func message(c *msgkit.Context) error {
 		gjson.Get(feature, "geometry.coordinates.1").Float())
 	if err != nil {
 		log.Printf("connected-clients: %v\n", err)
-		return err
+		return
 	}
 
 	for cid, places := range cc {
@@ -160,7 +166,6 @@ func message(c *msgkit.Context) error {
 			ws.Send(string(newMsg))
 		}
 	}
-	return nil
 }
 
 // connectedClients queries Tile38 for any users located in the same geofence
