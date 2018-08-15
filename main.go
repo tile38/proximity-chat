@@ -41,7 +41,7 @@ func main() {
 	props := make(map[string]string)
 	for _, place := range []string{"convention-center", "hyatt-regency"} {
 		gj, _ := ioutil.ReadFile("fences/" + place + ".geo.json")
-		props[place] = gjson.GetBytes(gj, "properties").String()
+		props["place:"+place] = gjson.GetBytes(gj, "properties").String()
 
 		// Create an object in Tile38 so we can view the static fences and
 		// create the static geofence bound to a channel

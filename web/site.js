@@ -153,8 +153,6 @@ function openWS() {
     ws.onmessage = function (e) {
         let msg = JSON.parse(e.data);
 
-        console.log(msg);
-
         // Ignore messages about ourself
         if (msg.id == me.properties.id) {
             if (msg.command == 'set' && msg.properties) {
