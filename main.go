@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -28,12 +29,13 @@ func main() {
 		},
 	}
 
-	srv = msgkit.New("/ws")        // Initialize a new msgkit server
-	srv.Static("/", "web")         // Bind the static web server
-	srv.OnOpen(onOpen)             // Handle connection opened events
-	srv.OnClose(onClose)           // Handle connection closed events
-	srv.Handle("Feature", feature) // Handle messages about feature updates
-	srv.Handle("Message", message) // Handle messages about chat messages
+	srv = msgkit.New("/ws")          // Initialize a new msgkit server
+	srv.Static("/", "web")           // Bind the static web server
+	srv.OnOpen(onOpen)               // Handle connection opened events
+	srv.OnClose(onClose)             // Handle connection closed events
+	srv.Handle("Viewport", viewport) // Handle messages about a users viewport
+	srv.Handle("Feature", feature)   // Handle messages about feature updates
+	srv.Handle("Message", message)   // Handle messages about chat messages
 
 	// Create an object and geofence for the Convention Center and the Hyatt
 	props := make(map[string]string)
@@ -44,17 +46,13 @@ func main() {
 		// Create an object in Tile38 so we can view the static fences and
 		// create the static geofence bound to a channel
 		redisDo("SET", "places", place, "OBJECT", string(gj))
-		redisDo("SETCHAN", place, "WITHIN", "people", "FENCE", "DETECT",
-			"enter,exit", "OBJECT", string(gj))
+		redisDo("SETCHAN", "place:"+place, "WITHIN", "people", "FENCE",
+			"DETECT", "enter,exit", "OBJECT", string(gj))
 	}
 
-	// TODO REMOVE WORLD CHANGES IN FAVOR OF VIEWPORT CHANGES
-	redisDo("SETCHAN", "world", "INTERSECTS", "people", "FENCE", "BOUNDS", -90,
-		-180, 90, 180)
-
 	// Create a roaming geofence for all people and bind it to a channel
-	redisDo("SETCHAN", "roaming", "NEARBY", "people", "FENCE", "ROAM", "people", "*",
-		dist)
+	redisDo("SETCHAN", "roamchan", "NEARBY", "people", "FENCE", "ROAM",
+		"people", "*", dist)
 
 	// Subscribe to
 	go func() {
@@ -72,8 +70,10 @@ func main() {
 func psubscribe(props map[string]string) {
 	conn := pool.Get()
 	defer conn.Close()
+
+	// Subscribe to all geofence channels
 	psc := redis.PubSubConn{Conn: conn}
-	psc.PSubscribe("*")
+	psc.PSubscribe("viewport:*", "roamchan", "place:*")
 	for {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
@@ -84,10 +84,18 @@ func psubscribe(props map[string]string) {
 				msg, _ = sjson.SetRaw(msg, "properties", p)
 			}
 
-			// Forward the message from Tile38 to all connected websocket conns
-			for _, id := range srv.Conns.IDs() {
-				if c, ok := srv.Conns.Get(id); ok {
+			if strings.Contains(v.Channel, "viewport") {
+				// Send viewport notifications only to one client
+				if c, ok := srv.Conns.Get(
+					strings.Split(v.Channel, ":")[1]); ok {
 					c.Send(msg)
+				}
+			} else {
+				// Send all other notifications to all users
+				for _, id := range srv.Conns.IDs() {
+					if c, ok := srv.Conns.Get(id); ok {
+						c.Send(msg)
+					}
 				}
 			}
 		case error:
@@ -120,10 +128,22 @@ func onOpen(connID string, conn *safews.Conn) {
 	}
 }
 
-// onCLose deletes the client from Tile38 when the websocket connection is
-// closed
+// onCLose deletes the viewport channel for the client from Tile38 as well as
+// the item in the people collection
 func onClose(connID string, conn *safews.Conn) {
+	redisDo("DELCHAN", "viewport:"+connID)
 	redisDo("DEL", "people", connID)
+}
+
+// viewport is a websocket message handler that creates/updates a users viewport
+// subscription
+func viewport(c *msgkit.Context) {
+	swLng := gjson.GetBytes(c.Message, "data._sw.lng").Float()
+	swLat := gjson.GetBytes(c.Message, "data._sw.lat").Float()
+	neLng := gjson.GetBytes(c.Message, "data._ne.lng").Float()
+	neLat := gjson.GetBytes(c.Message, "data._ne.lat").Float()
+	redisDo("SETCHAN", "viewport:"+c.ConnID, "INTERSECTS", "people", "FENCE",
+		"DETECT", "inside", "BOUNDS", swLat, swLng, neLat, neLng)
 }
 
 // feature is a websocket message handler that creates/updates a points location
@@ -185,8 +205,8 @@ func connectedClients(x, y float64) (map[string][]string, error) {
 	}
 
 	// Get all nearby people
-	nearbyRes, err := redis.Values(redisDo("NEARBY", "people", "IDS", "POINT", y,
-		x, dist))
+	nearbyRes, err := redis.Values(redisDo("NEARBY", "people", "IDS", "POINT",
+		y, x, dist))
 	if err != nil {
 		return nil, err
 	}

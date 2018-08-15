@@ -59,6 +59,7 @@ map.on('load', function () {
     let onmap = function () {
         me.properties.center = [map.getCenter().lng, map.getCenter().lat];
         me.properties.zoom = map.getZoom();
+        ws.send('{"type":"Viewport","data":' + JSON.stringify(map.getBounds()) + '}');
         storeMe();
     }
     map.on('drag', onmap);
