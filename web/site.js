@@ -65,8 +65,7 @@ map.on('load', function () {
     map.on('drag', onmap);
     map.on('zoom', onmap);
 
-    marker = makeMarker(true, me);
-    renderCircle(me, '#a2d036');
+    marker = renderMarker(true, me);
     marker.addTo(map);
     marker.on('drag', function () {
         me.geometry.coordinates = [marker.getLngLat().lng, marker.getLngLat().lat];
@@ -82,10 +81,7 @@ map.on('load', function () {
 // renderCircle
 function renderCircle(person, color) {
     let radius = 0.1;
-    let options = {
-        steps: 1000,
-        units: 'kilometers'
-    };
+    let options = {steps: 1000, units: 'kilometers'};
     let circle = turf.circle(person.geometry.coordinates, radius, options);
     renderLayer(person.properties.id, circle, color);
 }
@@ -140,9 +136,13 @@ function openWS() {
     ws.onopen = function () {
         connected = true;
         storeMe();
+        sendViewport();
+
+        // Renotify the server we still exist every 25 seconds
         setInterval(function () {
-            storeMe()
-        }, 2000)
+            storeMe();
+            sendViewport();
+        }, 25000)
     }
     ws.onclose = function () {
         connected = false;
@@ -152,6 +152,8 @@ function openWS() {
     }
     ws.onmessage = function (e) {
         let msg = JSON.parse(e.data);
+
+        console.log(msg);
 
         // Ignore messages about ourself
         if (msg.id == me.properties.id) {
@@ -169,9 +171,11 @@ function openWS() {
         switch (msg.command) {
             case 'set':
                 if (!markers[msg.id]) {
-                    markers[msg.id] = makeMarker(false, msg.object);
+                    // Create marker if it doesn't currently exist
+                    markers[msg.id] = renderMarker(false, msg.object);
                     markers[msg.id].addTo(map);
                 } else {
+                    // Update the marker if it exists
                     markers[msg.id].setLngLat(msg.object.geometry.coordinates);
                     markers[msg.id].getElement().
                     querySelector('.marker-name').innerText =
@@ -200,10 +204,16 @@ function openWS() {
             default:
                 if (msg.type == 'ID') {
                     me.properties.id = msg.id;
+                    renderCircle(me, '#a2d036');
                     storeMe();
                 }
-                if (msg.type == 'Feature' && msg.geometry.type == 'Polygon') {
-                    renderLayer(msg.properties.id, msg, '#a22427', true);
+                if (msg.type == 'Feature') {
+                    if (msg.geometry.type == 'Point') {
+                        renderMarker(msg.properties.id == me.properties.id, msg);
+                    }
+                    if (msg.geometry.type == 'Polygon') {
+                        renderLayer(msg.properties.id, msg, '#a22427', true);
+                    }
                 }
                 if (msg.type == 'Message') {
                     updateChat(msg);
@@ -252,6 +262,10 @@ function storeMe() {
         return;
     }
     ws.send(memsg);
+}
+
+function sendViewport() {
+    ws.send('{"type":"Viewport","data":' + JSON.stringify(map.getBounds()) + '}');
 }
 
 function calcNearby() {
@@ -317,7 +331,7 @@ function calcNearby() {
     }
 }
 
-function makeMarker(isme, person) {
+function renderMarker(isme, person) {
     let el = document.createElement('div');
     el.className = 'marker';
     el.style.backgroundColor = person.properties.color;
