@@ -78,7 +78,7 @@ function openWS() {
         setInterval(function () {
             storeMe();
             sendViewport();
-        }, 25000)
+        }, 1000)
     }
     ws.onclose = function () {
         connected = false;
@@ -118,9 +118,9 @@ function openWS() {
                 break;
             case 'del':
                 if (markers[msg.id]) {
-                    if (markers[msg.id].linked) {
-                        let layerName = 'l:' + id;
-                        let sourceName = 's:' + id;
+                    if (markers[msg.id].connected) {
+                        let layerName = 'l:' + msg.id;
+                        let sourceName = 's:' + msg.id;
                         if (map.getLayer(layerName)) {
                             map.removeLayer(layerName);
                         }
