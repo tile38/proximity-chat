@@ -1,5 +1,5 @@
 hash: 808fc4b81540640ca6294a6cbfd815f1cc83cdb192abf6eb90a4f33c37c456df
-updated: 2018-08-14T20:11:03.392254-07:00
+updated: 2018-08-16T10:30:35.164535-07:00
 imports:
 - name: github.com/gomodule/redigo
   version: 2cd21d9966bf7ff9ae091419744f0b3fb0fecace
@@ -18,10 +18,8 @@ imports:
   version: 1e3f6aeaa5bad08d777ea7807b279a07885dd8b2
 - name: github.com/tidwall/match
   version: 1731857f09b1f38450e2c12409748407822dc6be
-- name: github.com/tidwall/sjson
-  version: 6a22caf2fd45d5e2119bfc3717e984f15a7eb7ee
 - name: github.com/tile38/msgkit
-  version: 7823c587210a290ffe1f12721a16d816080fc1e9
+  version: ec56dc2406a36f343ff2ff248b5d704cad51fda5
   subpackages:
   - safews
 testImports: []

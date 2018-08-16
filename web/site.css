@@ -8,7 +8,7 @@ html {
     font-size: 15px;
     overflow: hidden;
     font-family: 'Roboto', sans-serif;
-    background-color: rgb(36, 63, 76);
+    background-color: #CAD5DD;
 }
 
 textarea,
@@ -26,20 +26,26 @@ button {
     position: absolute;
 }
 
+.title {
+    padding: 20px 20px 8px 20px;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
 .logo {
     width: 80px;
 }
 
 .box {
     z-index: 10;
-    background: #111f28;
-    color: white;
+    background: #E3E9ED;
+    color: #2F404B;
     display: flex;
     flex-direction: column;
 }
 
 .green-left {
-    border-left: 2px solid #a2d036;
+    border-left: 2px solid #A2D321;
 }
 
 .box.quarter {
@@ -61,16 +67,15 @@ button {
 }
 
 .box>.masthead {
-    background: #0b171d;
-    color: white;
-    padding: 25px;
+    background: #fff;
+    padding: 27px 27px 22px 27px;
     text-align: center;
     flex-shrink: 0;
 }
 
 .box>.info {
-    background: #162833;
-    color: #fff;
+    background: #EEF1F4;
+    color: #2F404B;
     font-size: 12px;
     margin: 10px;
     padding: 15px;
@@ -86,16 +91,13 @@ button {
     font-size: 15px;
     padding: 15px 20px;
     margin: 10px;
-    background-color: #0b171d;
-    color: white;
+    background-color: #F4F6F7;
+    color: #2F404B;
     bottom: 15px;
 }
 
 ::placeholder {
-    /* Chrome, Firefox, Opera, Safari 10.1+ */
-    color: white;
-    opacity: 1;
-    /* Firefox */
+    color: #BBC1C4;
 }
 
 .marker {

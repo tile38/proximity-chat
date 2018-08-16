@@ -3,7 +3,7 @@
 let ws; // The websocket connection
 let connected; // Whether or not the websocket is connected
 let me; // Our location on the map
-let marker;
+let marker; // Our own marker
 let markers = {}; // All markers that don't include ourself
 let chatInput = document.getElementById('chat-input');
 
@@ -17,7 +17,7 @@ let chatInput = document.getElementById('chat-input');
 
 getMe();
 
-// Continuously update interpolated info fields
+// Continuously update info fields
 window.setInterval(function () {
     document.getElementById('name').innerText = 'Name : ' + me.properties.name;
     document.getElementById('clientid').innerText = 'Client ID : ' + me.properties.id;
@@ -28,7 +28,6 @@ window.setInterval(function () {
 chatInput.addEventListener('keypress', function (ev) {
     if (ev.charCode == 13) {
         let message = this.value.trim();
-
         if (connected && message != '') {
             ws.send(JSON.stringify({
                 type: 'Message',
@@ -44,7 +43,7 @@ chatInput.addEventListener('keypress', function (ev) {
 mapboxgl.accessToken = 'pk.eyJ1Ijoic2R3b2xmZTMyIiwiYSI6ImNqa2JxdHcxOTAzMHQza241dmo4NTR6cmwifQ.JP0VMlXnDthDlYp0mVViXA';
 let map = new mapboxgl.Map({
     container: 'map',
-    style: 'mapbox://styles/sdwolfe32/cjkbw53fg1air2sqxfjo6sv2d',
+    style: 'mapbox://styles/sdwolfe32/cjkvl0av304r42sphvsm0odyw',
     center: me.properties.center,
     zoom: me.properties.zoom,
     keyboard: false,
@@ -59,7 +58,7 @@ map.on('load', function () {
     let onmap = function () {
         me.properties.center = [map.getCenter().lng, map.getCenter().lat];
         me.properties.zoom = map.getZoom();
-        ws.send('{"type":"Viewport","data":' + JSON.stringify(map.getBounds()) + '}');
+        sendViewport();
         storeMe();
     }
     map.on('drag', onmap);
@@ -69,66 +68,12 @@ map.on('load', function () {
     marker.addTo(map);
     marker.on('drag', function () {
         me.geometry.coordinates = [marker.getLngLat().lng, marker.getLngLat().lat];
-        renderCircle(me, '#a2d036');
         storeMe();
-        calcNearby();
     });
 })
 
 
 // ------ Functions ------
-
-// renderCircle
-function renderCircle(person, color) {
-    let radius = 0.1;
-    let options = {steps: 1000, units: 'kilometers'};
-    let circle = turf.circle(person.geometry.coordinates, radius, options);
-    renderLayer(person.properties.id, circle, color);
-}
-
-// renderLayer takes an identifier name, coordinates of a bounded geofence and a
-// color and renders both a fill and border line on the map
-function renderLayer(name, feature, color, outline) {
-    if (map.getSource(name + '-fill') != undefined) {
-        map.getSource(name + '-fill').setData(feature);
-    } else {
-        map.addLayer({
-            'id': name + '-fill',
-            'type': 'fill',
-            'source': {
-                'type': 'geojson',
-                'data': feature,
-            },
-            'paint': {
-                'fill-color': color,
-                'fill-opacity': 0.25,
-            }
-        });
-    }
-
-    if (outline) {
-        if (map.getSource(name + '-line') != undefined) {
-            map.getSource(name + '-line').setData(feature);
-        } else {
-            map.addLayer({
-                'id': name + '-line',
-                'type': 'line',
-                'source': {
-                    'type': 'geojson',
-                    'data': feature,
-                },
-                'layout': {
-                    'line-join': 'round',
-                    'line-cap': 'round',
-                },
-                'paint': {
-                    'line-color': color,
-                    'line-width': 2,
-                }
-            });
-        }
-    }
-}
 
 // openWS creates a websocket connection to our GO geolocation service
 function openWS() {
@@ -136,7 +81,6 @@ function openWS() {
     ws.onopen = function () {
         connected = true;
         storeMe();
-        sendViewport();
 
         // Renotify the server we still exist every 25 seconds
         setInterval(function () {
@@ -155,39 +99,31 @@ function openWS() {
 
         console.log(msg);
 
+        // For nearby roaming people, draw a line
+        if (msg.detect && msg.detect == 'roam') {
+            calcNearby(msg.id, msg.nearby);
+            return;
+        }
+
         // Ignore messages about ourself
         if (msg.id == me.properties.id) {
-            if (msg.command == 'set' && msg.properties) {
-                if (msg.detect == 'enter') {
-                    notify('You have entered : ' + msg.properties.name);
-                }
-                if (msg.detect == 'exit') {
-                    notify('You have exited : ' + msg.properties.name);
-                }
-            }
             return;
+        }
+
+        // Override viewport exits to delete command
+        if (msg.hook &&
+            msg.hook.includes('viewport:') &&
+            msg.detect == 'exit') {
+            msg.command = 'del'
         }
 
         switch (msg.command) {
             case 'set':
-                if (!markers[msg.id]) {
-                    // Create marker if it doesn't currently exist
-                    markers[msg.id] = renderMarker(false, msg.object);
-                    markers[msg.id].addTo(map);
-                } else {
-                    // Update the marker if it exists
-                    markers[msg.id].setLngLat(msg.object.geometry.coordinates);
-                    markers[msg.id].getElement().
-                    querySelector('.marker-name').innerText =
-                        msg.object.properties.name ?
-                        msg.object.properties.name :
-                        'Anonymous';
-                }
-                markers[msg.id].person = msg.object;
+                createMarker(msg.id, msg.object);
                 break;
             case 'del':
                 if (markers[msg.id]) {
-                    if (markers[msg.id].connected) {
+                    if (markers[msg.id].linked) {
                         let layerName = 'l:' + id;
                         let sourceName = 's:' + id;
                         if (map.getLayer(layerName)) {
@@ -204,15 +140,15 @@ function openWS() {
             default:
                 if (msg.type == 'ID') {
                     me.properties.id = msg.id;
-                    renderCircle(me, '#a2d036');
                     storeMe();
+                    sendViewport();
                 }
                 if (msg.type == 'Feature') {
-                    if (msg.geometry.type == 'Point') {
-                        renderMarker(msg.properties.id == me.properties.id, msg);
+                    if (msg.properties.id == me.properties.id) {
+                        return;
                     }
-                    if (msg.geometry.type == 'Polygon') {
-                        renderLayer(msg.properties.id, msg, '#a22427', true);
+                    if (msg.geometry.type == 'Point') {
+                        createMarker(msg.properties.id, msg);
                     }
                 }
                 if (msg.type == 'Message') {
@@ -220,7 +156,6 @@ function openWS() {
                 }
                 break;
         }
-        calcNearby();
     }
 }
 
@@ -249,7 +184,6 @@ function getMe() {
         };
         me.properties.center = me.geometry.coordinates;
         me.properties.zoom = 14;
-        storeMe();
     }
 }
 
@@ -268,14 +202,14 @@ function sendViewport() {
     ws.send('{"type":"Viewport","data":' + JSON.stringify(map.getBounds()) + '}');
 }
 
-function calcNearby() {
-    let linked;
-    for (hash in markers) {
-        pmarker = markers[hash];
-        let meters = distance(pmarker, marker);
-        let layerName = 'l:' + hash;
-        let sourceName = 's:' + hash;
-        if (meters < 100) {
+function calcNearby(id, linked) {
+    pmarker = markers[id];
+    let layerName = 'l:' + id;
+    let sourceName = 's:' + id;
+
+    // Add or remove the linking line
+    if (pmarker) {
+        if (linked) {
             let data = {
                 'type': 'Feature',
                 'properties': {},
@@ -309,8 +243,7 @@ function calcNearby() {
                 });
             }
             pmarker.getElement().style.borderColor = '#a2d036';
-            pmarker.linked = true;
-            linked = true;
+            pmarker.connected = true;
         } else {
             if (map.getLayer(layerName)) {
                 map.removeLayer(layerName);
@@ -319,9 +252,11 @@ function calcNearby() {
                 map.removeSource(sourceName);
             }
             pmarker.getElement().style.borderColor = null;
-            pmarker.linked = false;
+            pmarker.connected = false;
         }
     }
+
+    // Update our marker
     if (linked) {
         marker.getElement().style.borderColor = '#a2d036';
         document.getElementById('marker-dot').style.color = '#a2d036';
@@ -329,6 +264,23 @@ function calcNearby() {
         marker.getElement().style.borderColor = null;
         document.getElementById('marker-dot').style.color = null;
     }
+}
+
+function createMarker(id, feature) {
+    if (!markers[id]) {
+        // Create marker if it doesn't currently exist
+        markers[id] = renderMarker(false, feature);
+        markers[id].addTo(map);
+    } else {
+        // Update the marker if it exists
+        markers[id].setLngLat(feature.geometry.coordinates);
+        markers[id].getElement().
+        querySelector('.marker-name').innerText =
+            feature.properties.name ?
+            feature.properties.name :
+            'Anonymous';
+    }
+    markers[id].person = feature;
 }
 
 function renderMarker(isme, person) {
@@ -371,18 +323,6 @@ function renderMarker(isme, person) {
     return marker;
 }
 
-// notify places a greyed out italics message in the chat box notifying the user
-function notify(message) {
-    let messageDiv = document.createElement('div');
-    messageDiv.innerHTML = '<a style="font-style:italic;opacity:0.5">' +
-        message +
-        '</div>';
-
-    let chatArea = document.getElementById('chat-messages');
-    chatArea.scrollTop = chatArea.scrollHeight - chatArea.clientHeight;
-    chatArea.appendChild(messageDiv);
-}
-
 // updateChat updates the chat box to contain any new messages received
 function updateChat(message) {
     let messageDiv = document.createElement('div');
@@ -390,40 +330,8 @@ function updateChat(message) {
     b.style = "color:" + message.feature.properties.color + ";";
     b.innerText = message.feature.properties.name;
     messageDiv.appendChild(b);
-    messageDiv.insertAdjacentText('beforeend', ' via (' +
-        message.feature.properties.via + ') : ' + message.text);
+    messageDiv.insertAdjacentText('beforeend', ' : ' + message.text);
     let chatArea = document.getElementById('chat-messages');
     chatArea.scrollTop = chatArea.scrollHeight - chatArea.clientHeight;
     chatArea.appendChild(messageDiv);
 }
-
-function distance(latA, lonA, latB, lonB) {
-    if (arguments.length == 2) {
-        var a = latA.getLngLat();
-        var b = lonA.getLngLat();
-        latA = a.lat;
-        lonA = a.lng;
-        latB = b.lat;
-        lonB = b.lng;
-    }
-
-    // a = sin²(Δφ/2) + cos(φ1)⋅cos(φ2)⋅sin²(Δλ/2)
-    // tanδ = √(a) / √(1−a)
-    // see mathforum.org/library/drmath/view/51879.html for derivation
-
-    var R = 6371e3;
-    var φ1 = latA * Math.PI / 180,
-        λ1 = lonA * Math.PI / 180;
-    var φ2 = latB * Math.PI / 180,
-        λ2 = lonB * Math.PI / 180;
-    var Δφ = φ2 - φ1;
-    var Δλ = λ2 - λ1;
-
-    var a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-        Math.cos(φ1) * Math.cos(φ2) *
-        Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    var d = R * c;
-
-    return d;
-};

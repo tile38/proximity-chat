@@ -2,21 +2,20 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
 	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
 	"github.com/tile38/msgkit"
 	"github.com/tile38/msgkit/safews"
 )
 
-const dist = 100
+const dist = 250
 
-var srv *msgkit.Server // The websocket server
 var pool *redis.Pool   // The Tile38 connection pool
+var srv *msgkit.Server // The websocket server
 
 func main() {
 	// Create a new pool of connections to Tile38
@@ -28,76 +27,71 @@ func main() {
 		},
 	}
 
-	srv = msgkit.New("/ws")          // Initialize a new msgkit server
-	srv.Static("/", "web")           // Bind the static web server
-	srv.OnOpen(onOpen)               // Handle connection opened events
-	srv.OnClose(onClose)             // Handle connection closed events
-	srv.Handle("Feature", feature)   // Handle messages about feature updates
-	srv.Handle("Viewport", viewport) // Handle messages about a users viewport
-	srv.Handle("Message", message)   // Handle messages about chat messages
+	// Initialize a new msgkit server and bind all handlers
+	srv = msgkit.New("/ws").
+		Static("/", "web").
+		OnOpen(onOpen).
+		OnClose(onClose).
+		Handle("Feature", feature).
+		Handle("Viewport", viewport).
+		Handle("Message", message)
 
-	// Create an object and geofence for the Convention Center and the Hyatt
-	props := make(map[string]string)
-	for _, place := range []string{"convention-center", "hyatt-regency"} {
-		gj, _ := ioutil.ReadFile("fences/" + place + ".geo.json")
-		props["place:"+place] = gjson.GetBytes(gj, "properties").String()
-
-		// Create an object in Tile38 so we can view the static fences and
-		// create the static geofence bound to a channel
-		redisDo("SET", "places", place, "OBJECT", string(gj))
-		redisDo("SETCHAN", "place:"+place, "WITHIN", "people", "FENCE",
-			"DETECT", "enter,exit", "OBJECT", string(gj))
-	}
-
-	// Create a geofence to listen for people movement all around the globe
-	redisDo("SETCHAN", "world", "INTERSECTS", "people", "FENCE", "BOUNDS", -90,
-		-180, 90, 180)
-
-	// Create a roaming geofence for all people and bind it to a channel
+	// Create a world and roaming geofence
+	redisDo("SETCHAN", "worldchan", "INTERSECTS", "people", "FENCE", "BOUNDS",
+		-90, -180, 90, 180)
 	redisDo("SETCHAN", "roamchan", "NEARBY", "people", "FENCE", "ROAM",
 		"people", "*", dist)
 
-	// Subscribe to
+	// Subscribe to viewport, world, and roaming geofence notifications
 	go func() {
 		for {
-			psubscribe(props)
+			psubscribe("viewport:*", "worldchan", "roamchan")
 		}
 	}()
 
-	// Start listening for websocket messages
+	// Start listening for websocket connections and messages
 	log.Println(srv.Listen(":8000"))
 }
 
-// psubscribe listens on all channels for notifications, piping them out to all
-// connected websocket clients
-func psubscribe(props map[string]string) {
-	conn := pool.Get()
-	defer conn.Close()
-
-	// Subscribe to all geofence channels
-	psc := redis.PubSubConn{Conn: conn}
-	psc.PSubscribe("world", "place:*", "roamchan")
+// psubscribe listens on all passed channels for notifications, piping them out
+// to all connected websocket clients who can see the changes
+func psubscribe(channels ...interface{}) {
+	psc := redis.PubSubConn{Conn: pool.Get()}
+	defer psc.Close()
+	psc.PSubscribe(channels...)
 	for {
 		switch v := psc.Receive().(type) {
 		case redis.Message:
 			msg := string(v.Data)
 
-			// Add any custom properties to the payload
-			if p, ok := props[v.Channel]; ok {
-				msg, _ = sjson.SetRaw(msg, "properties", p)
-			}
-
-			// Determine which viewports to send the message to
-			redisDo("INTERSECTS", "viewport", "IDS")
-
-			// Send all other notifications to all users
-			for _, id := range srv.Conns.IDs() {
-				if c, ok := srv.Conns.Get(id); ok {
-					c.Send(msg)
+			command := gjson.Get(msg, "command").String()
+			if command == "set" || command == "del" {
+				// Send any viewport notifications to only listening viewport
+				hook := gjson.Get(msg, "hook").String()
+				if strings.Contains(hook, "viewport:") {
+					sendAll(msg, strings.Split(hook, ":")[1])
+					continue
 				}
+
+				// Send any roaming to all listening for roaming
+				if strings.Contains(hook, "roamchan") {
+					sendAll(msg)
+					continue
+				}
+
+				// Send all other update notifications to those who can see it
+				res, _ := redis.Values(redisDo("INTERSECTS", "viewport", "IDS",
+					"GET", "people", gjson.Get(msg, "id").String()))
+				if len(res) > 1 {
+					ids, _ := redis.Strings(res[1], nil)
+					sendAll(msg, ids...)
+				}
+				continue
+			} else {
+				sendAll(msg)
 			}
 		case error:
-			log.Println(v)
+			log.Printf("psubscribe: %v\n", v)
 			continue
 		}
 	}
@@ -110,49 +104,47 @@ func onOpen(connID string, conn *safews.Conn) {
 
 // onCLose deletes the clients point in the people collection on a disconnect
 func onClose(connID string, conn *safews.Conn) {
-	redisDo("DEL", "viewport", connID)
+	log.Println("DELETING PERSON ", connID)
 	redisDo("DEL", "people", connID)
+	log.Println("DELETING VIEWPORT OBJECT ", connID)
+	redisDo("DEL", "viewport", connID)
+	log.Println("DELETING VIEWPORT GEOFENCE ", connID)
+	redisDo("DELCHAN", "viewport:"+connID)
 }
 
 // feature is a websocket message handler that creates/updates a persons
-// location in Tile38
+// position in Tile38
 func feature(c *msgkit.Context) {
+	log.Println("CREATING PERSON ", c.ConnID)
 	redisDo("SET", "people", c.ConnID, "EX", 30, "OBJECT", c.Message)
 }
 
 // viewport is a websocket message handler that queries Tile38 for all people
-// currently in a users viewport
+// currently in a clients viewport
 func viewport(c *msgkit.Context) {
 	swLat := gjson.GetBytes(c.Message, "data._sw.lat").Float()
 	swLng := gjson.GetBytes(c.Message, "data._sw.lng").Float()
 	neLat := gjson.GetBytes(c.Message, "data._ne.lat").Float()
 	neLng := gjson.GetBytes(c.Message, "data._ne.lng").Float()
 
-	// Create the viewport object in Tile38
-	redisDo("SET", "viewport", c.ConnID, "EX", 30, "BOUNDS", swLat, swLng, neLat, neLng)
+	log.Println("CREATING VIEWPORT OBJECT ", c.ConnID)
+
+	// Create the viewport bounds and geofence in Tile38
+	redisDo("SET", "viewport", c.ConnID, "EX", 30, "BOUNDS", swLat, swLng,
+		neLat, neLng)
+
+	log.Println("CREATING VIEWPORT GEOFENCE ", c.ConnID)
+
+	redisDo("SETCHAN", "viewport:"+c.ConnID, "WITHIN", "people", "FENCE",
+		"DETECT", "exit", "BOUNDS", swLat, swLng, neLat, neLng)
 
 	// Query for all people in the viewport bounds
-	people, err := redis.Values(redisDo("INTERSECTS", "people", "GET", "viewport", c.ConnID))
-	if err != nil {
-		log.Printf("viewport: %v\n", err)
-		return
-	}
+	people, _ := redis.Values(redisDo("INTERSECTS", "people", "GET", "viewport",
+		c.ConnID))
+
+	// Send all people in the viewport to the messager
 	if len(people) > 1 {
 		ps, _ := redis.Values(people[1], nil)
-		for _, p := range ps {
-			kv, _ := redis.ByteSlices(p, nil)
-			c.Conn.Send(string(kv[1]))
-		}
-	}
-
-	// Query for all places in the viewport bounds
-	places, err := redis.Values(redisDo("INTERSECTS", "places", "GET", "viewport", c.ConnID))
-	if err != nil {
-		log.Printf("viewport: %v\n", err)
-		return
-	}
-	if len(places) > 1 {
-		ps, _ := redis.Values(places[1], nil)
 		for _, p := range ps {
 			kv, _ := redis.ByteSlices(p, nil)
 			c.Conn.Send(string(kv[1]))
@@ -165,66 +157,32 @@ func viewport(c *msgkit.Context) {
 func message(c *msgkit.Context) {
 	feature := gjson.GetBytes(c.Message, "feature").String()
 
-	// Get the connected clients from Tile38
-	cc, err := connectedClients(
-		gjson.Get(feature, "geometry.coordinates.0").Float(),
-		gjson.Get(feature, "geometry.coordinates.1").Float())
+	// Query all nearby people from Tile38
+	nearbyRes, err := redis.Values(redisDo("NEARBY", "people", "IDS", "POINT",
+		gjson.Get(feature, "geometry.coordinates.1").Float(),
+		gjson.Get(feature, "geometry.coordinates.0").Float(), dist))
 	if err != nil {
 		log.Printf("message: %v\n", err)
 		return
 	}
 
-	for cid, places := range cc {
-		if ws, ok := srv.Conns.Get(cid); ok {
-			newMsg, _ := sjson.SetBytes(c.Message, "feature.properties.via",
-				places)
-			ws.Send(string(newMsg))
-		}
+	if len(nearbyRes) > 1 {
+		// Send the message to all nearby people
+		nearby, _ := redis.Strings(nearbyRes[1], nil)
+		sendAll(string(c.Message), nearby...)
 	}
 }
 
-// connectedClients queries Tile38 for any users located in the same geofence
-// as the messager located at the x and y coordinates passed
-func connectedClients(x, y float64) (map[string][]string, error) {
-	// map of person ID to a slice of connected geo-fences
-	idMap := make(map[string][]string)
-
-	// Get all intersecting places for the point
-	placeRes, err := redis.Values(redisDo("INTERSECTS", "places", "IDS",
-		"BOUNDS", y, x, y, x))
-	if err != nil {
-		log.Printf("connectedClients: %v\n", err)
-		return nil, err
+// sendAll sends the passed websocket message to all connection IDs passed
+func sendAll(msg string, connIDs ...string) {
+	if len(connIDs) == 0 {
+		connIDs = srv.Conns.IDs()
 	}
-	if len(placeRes) > 1 {
-		placeIDs, _ := redis.Strings(placeRes[1], nil)
-		for _, placeID := range placeIDs {
-			// Get all intersecting points in those places
-			peopleRes, err := redis.Values(redisDo("INTERSECTS", "people",
-				"IDS", "GET", "places", placeID))
-			if err != nil {
-				return nil, err
-			}
-
-			peopleIDs, _ := redis.Strings(peopleRes[1], nil)
-			for _, v := range peopleIDs {
-				idMap[v] = append(idMap[v], placeID)
-			}
+	for _, connID := range connIDs {
+		if ws, ok := srv.Conns.Get(connID); ok {
+			ws.Send(msg)
 		}
 	}
-
-	// Get all nearby people
-	nearbyRes, err := redis.Values(redisDo("NEARBY", "people", "IDS", "POINT",
-		y, x, dist))
-	if err != nil {
-		log.Printf("connectedClients: %v\n", err)
-		return nil, err
-	}
-	peopleIDs, _ := redis.Strings(nearbyRes[1], nil)
-	for _, v := range peopleIDs {
-		idMap[v] = append(idMap[v], "roaming")
-	}
-	return idMap, nil
 }
 
 // redisDo executes a redis command on a new connection and returns the response
