@@ -3,8 +3,7 @@
 let ws; // The websocket connection
 let connected; // Whether or not the websocket is connected
 let me; // Our location on the map
-let marker; // Our own marker
-let markers = {}; // All markers that don't include ourself
+let markers = {}; // All markers on the map
 let chatInput = document.getElementById('chat-input');
 
 // ------ DEBUG ------
@@ -63,13 +62,6 @@ map.on('load', function () {
     }
     map.on('drag', onmap);
     map.on('zoom', onmap);
-
-    marker = renderMarker(true, me);
-    marker.addTo(map);
-    marker.on('drag', function () {
-        me.geometry.coordinates = [marker.getLngLat().lng, marker.getLngLat().lat];
-        storeMe();
-    });
 })
 
 
@@ -97,15 +89,18 @@ function openWS() {
     ws.onmessage = function (e) {
         let msg = JSON.parse(e.data);
 
-        console.log(msg);
-
-        // For nearby roaming people, draw a line
+        // For roaming notifications
         if (msg.detect && msg.detect == 'roam') {
-            calcNearby(msg.id, msg.nearby);
+            // If I'm part of this geofence
+            if ((msg.id == me.properties.id) ||
+                (msg.nearby && msg.nearby.id == me.properties.id) ||
+                (msg.faraway && msg.faraway.id == me.properties.id)) {
+                calcNearby(msg);
+            }
             return;
         }
 
-        // Ignore messages about ourself
+        // Ignore any other messages about ourself
         if (msg.id == me.properties.id) {
             return;
         }
@@ -139,6 +134,16 @@ function openWS() {
                 break;
             default:
                 if (msg.type == 'ID') {
+                    // When we get our ID, render our marker and make it 
+                    // draggable
+                    markers[msg.id] = renderMarker(true, me);
+                    markers[msg.id].addTo(map);
+                    markers[msg.id].on('drag', function () {
+                        me.geometry.coordinates = [markers[msg.id].getLngLat().lng,
+                            markers[msg.id].getLngLat().lat
+                        ];
+                        storeMe();
+                    });
                     me.properties.id = msg.id;
                     storeMe();
                     sendViewport();
@@ -202,13 +207,26 @@ function sendViewport() {
     ws.send('{"type":"Viewport","data":' + JSON.stringify(map.getBounds()) + '}');
 }
 
-function calcNearby(id, linked) {
-    pmarker = markers[id];
+function calcNearby(roammsg) {
+    let id;
+    let linked = roammsg.nearby;
+
+    // Pick the ID that isn't ours
+    if (roammsg.id == me.properties.id) {
+        if (roammsg.nearby) {
+            id = roammsg.nearby.id;
+        } else {
+            id = roammsg.faraway.id;
+        }
+    } else {
+        id = roammsg.id;
+    }
+
     let layerName = 'l:' + id;
     let sourceName = 's:' + id;
 
     // Add or remove the linking line
-    if (pmarker) {
+    if (markers[id]) {
         if (linked) {
             let data = {
                 'type': 'Feature',
@@ -217,7 +235,7 @@ function calcNearby(id, linked) {
                     'type': 'LineString',
                     'coordinates': [
                         me.geometry.coordinates,
-                        pmarker.person.geometry.coordinates
+                        markers[id].person.geometry.coordinates
                     ]
                 }
             }
@@ -242,8 +260,8 @@ function calcNearby(id, linked) {
                     }
                 });
             }
-            pmarker.getElement().style.borderColor = '#a2d036';
-            pmarker.connected = true;
+            markers[id].getElement().style.borderColor = '#a2d036';
+            markers[id].connected = true;
         } else {
             if (map.getLayer(layerName)) {
                 map.removeLayer(layerName);
@@ -251,17 +269,17 @@ function calcNearby(id, linked) {
             if (map.getSource(sourceName)) {
                 map.removeSource(sourceName);
             }
-            pmarker.getElement().style.borderColor = null;
-            pmarker.connected = false;
+            markers[id].getElement().style.borderColor = null;
+            markers[id].connected = false;
         }
     }
 
     // Update our marker
     if (linked) {
-        marker.getElement().style.borderColor = '#a2d036';
+        markers[me.properties.id].getElement().style.borderColor = '#a2d036';
         document.getElementById('marker-dot').style.color = '#a2d036';
     } else {
-        marker.getElement().style.borderColor = null;
+        markers[me.properties.id].getElement().style.borderColor = null;
         document.getElementById('marker-dot').style.color = null;
     }
 }
@@ -315,12 +333,12 @@ function renderMarker(isme, person) {
             person.properties.name ? person.properties.name : 'Anonymous';
         el.appendChild(ed);
     }
-    let marker = new mapboxgl.Marker({
+    let newMarker = new mapboxgl.Marker({
         element: el,
         draggable: isme
     })
-    marker.setLngLat(person.geometry.coordinates);
-    return marker;
+    newMarker.setLngLat(person.geometry.coordinates);
+    return newMarker;
 }
 
 // updateChat updates the chat box to contain any new messages received
