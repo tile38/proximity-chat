@@ -115,8 +115,6 @@ function openWS() {
             msg.command = 'del'
         }
 
-        console.log(msg);
-
         switch (msg.command) {
             case 'set':
                 createMarker(msg.id, msg.object);
