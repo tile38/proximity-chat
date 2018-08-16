@@ -72,18 +72,21 @@ function openWS() {
     ws = new WebSocket('ws://' + location.host + '/ws');
     ws.onopen = function () {
         connected = true;
-        storeMe();
+        setTimeout(function() {
+            storeMe();
+            sendViewport();
+        }, 100);
 
         // Renotify the server we still exist every 25 seconds
         setInterval(function () {
             storeMe();
             sendViewport();
-        }, 1000)
+        }, 25000);
     }
     ws.onclose = function () {
         connected = false;
         setTimeout(function () {
-            openWS()
+            openWS();
         }, 1000)
     }
     ws.onmessage = function (e) {
@@ -111,6 +114,8 @@ function openWS() {
             msg.detect == 'exit') {
             msg.command = 'del'
         }
+
+        console.log(msg);
 
         switch (msg.command) {
             case 'set':
@@ -255,12 +260,12 @@ function calcNearby(roammsg) {
                         'line-cap': 'round'
                     },
                     'paint': {
-                        'line-color': '#a2d036',
+                        'line-color': '#50C5E3',
                         'line-width': 3
                     }
                 });
             }
-            markers[id].getElement().style.borderColor = '#a2d036';
+            markers[id].getElement().style.borderColor = '#50C5E3';
             markers[id].connected = true;
         } else {
             if (map.getLayer(layerName)) {
@@ -276,8 +281,8 @@ function calcNearby(roammsg) {
 
     // Update our marker
     if (linked) {
-        markers[me.properties.id].getElement().style.borderColor = '#a2d036';
-        document.getElementById('marker-dot').style.color = '#a2d036';
+        markers[me.properties.id].getElement().style.borderColor = '#50C5E3';
+        document.getElementById('marker-dot').style.color = '#50C5E3';
     } else {
         markers[me.properties.id].getElement().style.borderColor = null;
         document.getElementById('marker-dot').style.color = null;
