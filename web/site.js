@@ -181,9 +181,9 @@ function getMe() {
             properties: {
                 id: 'Unknown',
                 color: 'rgba(' +
-                    Math.floor(Math.random() * 128 + 128) + ',' +
-                    Math.floor(Math.random() * 128 + 128) + ',' +
-                    Math.floor(Math.random() * 128 + 128) + ',' +
+                    Math.floor(Math.random() * 128 + 50) + ',' +
+                    Math.floor(Math.random() * 128 + 50) + ',' +
+                    Math.floor(Math.random() * 128 + 100) + ',' +
                     '1.0)',
             }
         };
