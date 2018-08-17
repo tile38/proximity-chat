@@ -54,14 +54,18 @@ map.on('load', function () {
     openWS();
 
     // Track map position and zoom
-    let onmap = function () {
-        me.properties.center = [map.getCenter().lng, map.getCenter().lat];
-        me.properties.zoom = map.getZoom();
-        sendViewport();
-        storeMe();
+    let onmap = function(throttled) {
+        return function() {
+            me.properties.center = [map.getCenter().lng, map.getCenter().lat];
+            me.properties.zoom = map.getZoom();
+            sendViewport();
+            storeMe(throttled);
+        };
     }
-    map.on('drag', onmap);
-    map.on('zoom', onmap);
+    map.on('dragend', onmap(false));
+    map.on('zoomend', onmap(false));
+    map.on('drag', onmap(true));
+    map.on('zoom', onmap(true));
 })
 
 
@@ -145,7 +149,13 @@ function openWS() {
                         me.geometry.coordinates = [markers[msg.id].getLngLat().lng,
                             markers[msg.id].getLngLat().lat
                         ];
-                        storeMe();
+                        storeMe(true);
+                    });
+                    markers[msg.id].on('dragend', function () {
+                        me.geometry.coordinates = [markers[msg.id].getLngLat().lng,
+                            markers[msg.id].getLngLat().lat
+                        ];
+                        storeMe(false);
                     });
                     me.properties.id = msg.id;
                     storeMe();
@@ -195,19 +205,34 @@ function getMe() {
     }
 }
 
+let last = 0;
+function wssend(msg, throttled) {
+    if (throttled) {
+        let now = new Date();
+        if ((now).getTime() < (last+500)) {
+            return;
+        }
+        last = (now).getTime();
+    }
+    ws.send(msg);
+}
+
 // storeMe stores our current location in sessionStorage and broadcasts it to 
 // the websocket server
-function storeMe() {
+function storeMe(throttled) {
     let memsg = JSON.stringify(me);
     sessionStorage.setItem('location', memsg);
     if (!connected) {
         return;
     }
-    ws.send(memsg);
+    wssend(memsg, throttled);
 }
 
-function sendViewport() {
-    ws.send('{"type":"Viewport","data":' + JSON.stringify(map.getBounds()) + '}');
+function sendViewport(throttled) {
+    if (!connected) {
+        return;
+    }
+    wssend('{"type":"Viewport","data":' + JSON.stringify(map.getBounds()) + '}', throttled);
 }
 
 function calcNearby(roammsg) {
