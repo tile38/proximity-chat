@@ -104,18 +104,14 @@ func onOpen(connID string, conn *safews.Conn) {
 
 // onCLose deletes the clients point in the people collection on a disconnect
 func onClose(connID string, conn *safews.Conn) {
-	log.Println("DELETING PERSON ", connID)
 	redisDo("DEL", "people", connID)
-	log.Println("DELETING VIEWPORT OBJECT ", connID)
 	redisDo("DEL", "viewport", connID)
-	log.Println("DELETING VIEWPORT GEOFENCE ", connID)
 	redisDo("DELCHAN", "viewport:"+connID)
 }
 
 // feature is a websocket message handler that creates/updates a persons
 // position in Tile38
 func feature(c *msgkit.Context) {
-	log.Println("CREATING PERSON ", c.ConnID)
 	redisDo("SET", "people", c.ConnID, "EX", 30, "OBJECT", c.Message)
 }
 
@@ -127,13 +123,9 @@ func viewport(c *msgkit.Context) {
 	neLat := gjson.GetBytes(c.Message, "data._ne.lat").Float()
 	neLng := gjson.GetBytes(c.Message, "data._ne.lng").Float()
 
-	log.Println("CREATING VIEWPORT OBJECT ", c.ConnID)
-
 	// Create the viewport bounds and geofence in Tile38
 	redisDo("SET", "viewport", c.ConnID, "EX", 30, "BOUNDS", swLat, swLng,
 		neLat, neLng)
-
-	log.Println("CREATING VIEWPORT GEOFENCE ", c.ConnID)
 
 	redisDo("SETCHAN", "viewport:"+c.ConnID, "WITHIN", "people", "FENCE",
 		"DETECT", "exit", "BOUNDS", swLat, swLng, neLat, neLng)
