@@ -54,8 +54,8 @@ map.on('load', function () {
     openWS();
 
     // Track map position and zoom
-    let onmap = function(throttled) {
-        return function() {
+    let onmap = function (throttled) {
+        return function () {
             me.properties.center = [map.getCenter().lng, map.getCenter().lat];
             me.properties.zoom = map.getZoom();
             sendViewport();
@@ -76,7 +76,7 @@ function openWS() {
     ws = new WebSocket('ws://' + location.host + '/ws');
     ws.onopen = function () {
         connected = true;
-        setTimeout(function() {
+        setTimeout(function () {
             storeMe();
             sendViewport();
         }, 100);
@@ -206,10 +206,11 @@ function getMe() {
 }
 
 let last = 0;
+
 function wssend(msg, throttled) {
     if (throttled) {
         let now = new Date();
-        if ((now).getTime() < (last+500)) {
+        if ((now).getTime() < (last + 100)) {
             return;
         }
         last = (now).getTime();

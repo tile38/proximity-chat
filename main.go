@@ -23,7 +23,7 @@ func main() {
 		MaxIdle:     16,
 		IdleTimeout: 240 * time.Second,
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", ":9851")
+			return redis.Dial("tcp", "tile38:9851")
 		},
 	}
 
@@ -66,20 +66,22 @@ func psubscribe(channels ...interface{}) {
 
 			command := gjson.Get(msg, "command").String()
 			if command == "set" || command == "del" {
-				// Send any viewport notifications to only listening viewport
+				// Send any viewport notifications to only the single listening
+				// viewport
 				hook := gjson.Get(msg, "hook").String()
 				if strings.Contains(hook, "viewport:") {
 					sendAll(msg, strings.Split(hook, ":")[1])
 					continue
 				}
 
-				// Send any roaming to all listening for roaming
+				// Send any roaming to all clients
 				if strings.Contains(hook, "roamchan") {
 					sendAll(msg)
 					continue
 				}
 
-				// Send all other update notifications to those who can see it
+				// Send all other update notifications to only clients who can
+				// see the change in their viewport
 				res, _ := redis.Values(redisDo("INTERSECTS", "viewport", "IDS",
 					"GET", "people", gjson.Get(msg, "id").String()))
 				if len(res) > 1 {
@@ -126,7 +128,6 @@ func viewport(c *msgkit.Context) {
 	// Create the viewport bounds and geofence in Tile38
 	redisDo("SET", "viewport", c.ConnID, "EX", 30, "BOUNDS", swLat, swLng,
 		neLat, neLng)
-
 	redisDo("SETCHAN", "viewport:"+c.ConnID, "WITHIN", "people", "FENCE",
 		"DETECT", "exit", "BOUNDS", swLat, swLng, neLat, neLng)
 
