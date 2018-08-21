@@ -1,9 +1,13 @@
 // ------ Variables ------
+const expires = 4000;            // markers are auto removed after 5 seconds
+const minUpdateFrequency = 200;  // minimum interval duration for posn updates
+const maxUpdateFreqeuncy = 1000; // maximum interval duration for posn updates
 
 let ws; // The websocket connection
 let connected; // Whether or not the websocket is connected
-let me; // Our location on the map
-let markers = {}; // All markers on the map
+let me; // Client state including location on the map
+let markers = new Map(); // All markers. Using an ES6 Map for insertion order
+let dragMarker; // The user draggable marker
 let chatInput = document.getElementById('chat-input');
 
 // ------ DEBUG ------
@@ -14,14 +18,8 @@ let chatInput = document.getElementById('chat-input');
 
 // ------ Main ------
 
-getMe();
-
-// Continuously update info fields
-window.setInterval(function () {
-    document.getElementById('name').innerText = 'Name : ' + me.properties.name;
-    document.getElementById('clientid').innerText = 'Client ID : ' + me.properties.id;
-    document.getElementById('position').innerText = 'Position : ' + me.geometry.coordinates;
-}, 10);
+// Load or generate the client state
+loadMe();
 
 // Bind the chat input keypress listener to its handler
 chatInput.addEventListener('keypress', function (ev) {
@@ -49,325 +47,370 @@ let map = new mapboxgl.Map({
 });
 
 // Set the maps on load functionality
-map.on('load', function () {
-    // Form a new websocket connection
-    openWS();
+map.on('load', function(){
+
+    // The map is loaded, start up all systems.
 
     // Track map position and zoom
-    let onmap = function(throttled) {
-        return function() {
-            me.properties.center = [map.getCenter().lng, map.getCenter().lat];
-            me.properties.zoom = map.getZoom();
-            sendViewport();
-            storeMe(throttled);
-        };
+    let onmap = function() {
+        me.properties.center = [map.getCenter().lng, map.getCenter().lat];
+        me.properties.zoom = map.getZoom();
+        storeMe();
     }
-    map.on('dragend', onmap(false));
-    map.on('zoomend', onmap(false));
-    map.on('drag', onmap(true));
-    map.on('zoom', onmap(true));
+    map.on('drag', onmap);
+    map.on('zoom', onmap);
+
+    // create the transparent draggable marker
+    createDragMarker(me.geometry.coordinates);
+    createMarker(me, true);
+
+    // establish the socket connection with the server
+    openWS();
+
+    // start the animations
+    requestAnimationFrame(draw);
+
+    // Continually send the client state. The 100ms is only a hint, sendMe() 
+    // manages the actual throttling.
+    setInterval(function(){ sendMe(true); }, 100);
+    setInterval(function(){ expireMarkers(); }, 1000);
+
+    // output some useful client information
+    displayClientInfo();
+
+
+    // make the canvas display element. All stuff is draw on this layer.
+    var container = map.getCanvasContainer();
+    canvas = document.createElement("canvas");
+    canvas.style.position = 'absolute';
+    container.appendChild(canvas);
+    let resize = function(){
+        var mcanvas = map.getCanvas();
+        canvas.width = mcanvas.width;
+        canvas.height = mcanvas.height;
+        canvas.style.width = mcanvas.offsetWidth+"px";
+        canvas.style.height = mcanvas.offsetHeight+"px";
+        canvas.style.top = mcanvas.offsetTop+"px";
+        canvas.style.left = mcanvas.offsetLeft+"px";
+    }
+    window.addEventListener('resize', resize);
+    resize();
 })
 
 
+
 // ------ Functions ------
+
+
+function displayClientInfo(){
+    // Continuously update info fields
+    window.setInterval(function () {
+        document.getElementById('name').innerText = 'Name : ' + me.properties.name;
+        document.getElementById('clientid').innerText = 'Client ID : ' + me.id;
+        document.getElementById('position').innerText = 'Position : ' + 
+            me.geometry.coordinates[0].toFixed(8)+','+me.geometry.coordinates[1].toFixed(8);
+    }, 100);
+}
+
+
+
+
+
+// createDragMarker creates a transparent marker that tracks the users dot
+// drag event. It's coordinate is then used to set the 'me' feature coordinate.
+function createDragMarker(coords){
+    let el = document.createElement('div');
+    el.style.width = '32px';
+    el.style.height = '32px';
+    el.style.background = 'rgba(0,0,0,0.0)';
+    el.style.zIndex = 4; // marker is the highest of all
+    dragMarker = new mapboxgl.Marker({
+        element: el,
+        draggable: true
+    })
+    dragMarker.on('drag', function () {
+        let coords = dragMarker.getLngLat();
+        let marker = markers.get(me.id);
+        me.geometry.coordinates = [coords.lng, coords.lat];
+        storeMe();
+    });
+    dragMarker.setLngLat(coords);
+    dragMarker.addTo(map);
+}
+
+
+// createMarker creates a marker and adds it to the markers hashmap. 
+function createMarker(feature, anim){
+    let marker = new mapboxgl.Marker({element: document.createElement('div')})
+    marker.isme = feature.id == me.id;
+    marker.nearbyFade = 0;
+    if (anim) {
+        marker.fade = 0;
+        marker.fadeTween = new TWEEN.Tween(0)
+            .to(1, 800)
+            .easing(TWEEN.Easing.Bounce.Out)
+            .onUpdate(function(v) {
+                marker.fade = v;
+            }).start();
+    } else {
+        marker.fade = 1;
+    }
+    marker.feature = feature;
+    marker.setLngLat(feature.geometry.coordinates);
+    marker.addTo(map);
+    markers.set(feature.id, marker);
+}
+
+// updateMarker updates or creates a new marker based on the feature position.
+// When nearby is provided and is a value true/false boolean then the marker
+// nearby-connection lines are updated.
+function updateMarker(feature, nearby, anim){
+    let marker = markers.get(feature.id)
+    if (!marker){
+        createMarker(feature, anim);
+        marker = markers.get(feature.id);
+    } else if (marker.deleting) {
+        return;
+    } else {
+        setMarkerFeature(marker, feature, anim);
+    }
+    marker.timestamp = new Date().getTime();
+
+    // fill nearby stuff
+    switch (nearby){
+    case true:
+        marker.nearbyTime = marker.timestamp;
+        break;
+    case false:
+        marker.nearbyTime = 0;
+        break;
+    default:
+        // undefined nearby
+        return;
+    }
+
+    // fill nearby info
+    if (marker.nearbyTween){
+        marker.nearbyTween.stop();
+        delete marker.nearbyTween;
+    }
+
+    if (anim){
+        const dur = 200;
+        let from = {v:marker.nearbyFade};
+        let to, ease;
+        if (nearby){
+            // fade in
+            ease = TWEEN.Easing.Quadratic.Out;
+            to = {v:1};
+        } else {
+            // fade out
+            ease = TWEEN.Easing.Quadratic.In;
+            to = {v:0};
+        }
+        marker.nearbyTween = new TWEEN.Tween(from).to(to, dur)
+            .easing(ease)
+            .onUpdate(function(){
+                marker.nearbyFade = from.v;
+            }).start();
+    } else {
+        marker.nearbyFade = nearby?1:0;
+    }
+
+
+
+}
+
+function deleteMarker(id, anim) {
+    let marker = markers.get(id);
+    if (!marker || marker.deleting){
+        return;
+    }
+    marker.deleting = true;
+    if (anim){
+        if (marker.fadeTween){
+            marker.fadeTween.stop();
+            delete marker.fadeTween;
+        }
+        var o = {v:marker.fade}
+        new TWEEN.Tween(o).to({v:0}, 800)
+        .easing(TWEEN.Easing.Exponential.Out)
+        .onUpdate(function() {
+            marker.fade = o.v;
+        }).onComplete(function(){
+            marker.remove();
+            markers.delete(id);
+        }).start();
+    } else {
+        marker.remove();
+        markers.delete(id);
+    }
+}
+
+
+// setMarkerFeature sets the marker feature and animates it's position.
+function setMarkerFeature(marker, feature, anim){
+    if (marker.moveTween){
+        marker.moveTween.stop();
+        delete marker.moveTween;
+    }
+    var coords = {
+        lng: marker.feature.geometry.coordinates[0],
+        lat: marker.feature.geometry.coordinates[1],
+    }
+    var to = {
+        lng: feature.geometry.coordinates[0],
+        lat: feature.geometry.coordinates[1],
+    }
+    
+    if (anim){
+        if (coords.lng == to.lng && coords.lat == to.lat){
+            return;
+        }
+        marker.moveTween = new TWEEN.Tween(coords)
+            .to(to, minUpdateFrequency*2)
+            .easing(TWEEN.Easing.Linear.None)
+            .onUpdate(function() {
+                marker.feature.geometry.coordinates[0] = coords.lng;
+                marker.feature.geometry.coordinates[1] = coords.lat;
+            }).start();
+    } else {
+        marker.feature = feature;
+    }
+}
 
 // openWS creates a websocket connection to our GO geolocation service
 function openWS() {
     ws = new WebSocket('ws://' + location.host + '/ws');
     ws.onopen = function () {
+        console.log("socket opened")
         connected = true;
-        setTimeout(function() {
-            storeMe();
-            sendViewport();
-        }, 100);
-
-        // Renotify the server we still exist every 25 seconds
-        setInterval(function () {
-            storeMe();
-            sendViewport();
-        }, 25000);
+        sendMe(false);
     }
     ws.onclose = function () {
+        console.log("socket closed");
         connected = false;
-        setTimeout(function () {
-            openWS();
-        }, 1000)
+        setTimeout(function () { openWS(); }, 1000); // retry in one second
     }
     ws.onmessage = function (e) {
         let msg = JSON.parse(e.data);
-
-        // For roaming notifications
-        if (msg.detect && msg.detect == 'roam') {
-            // If I'm part of this geofence
-            if ((msg.id == me.properties.id) ||
-                (msg.nearby && msg.nearby.id == me.properties.id) ||
-                (msg.faraway && msg.faraway.id == me.properties.id)) {
-                calcNearby(msg);
-            }
-            return;
-        }
-
-        // Ignore any other messages about ourself
-        if (msg.id == me.properties.id) {
-            return;
-        }
-
-        // Override viewport exits to delete command
-        if (msg.hook &&
-            msg.hook.includes('viewport:') &&
-            msg.detect == 'exit') {
-            msg.command = 'del'
-        }
-
-        switch (msg.command) {
-            case 'set':
-                createMarker(msg.id, msg.object);
-                break;
-            case 'del':
-                if (markers[msg.id]) {
-                    if (markers[msg.id].connected) {
-                        let layerName = 'l:' + msg.id;
-                        let sourceName = 's:' + msg.id;
-                        if (map.getLayer(layerName)) {
-                            map.removeLayer(layerName);
-                        }
-                        if (map.getSource(sourceName)) {
-                            map.removeSource(sourceName);
-                        }
-                    }
-                    markers[msg.id].remove(map);
-                    delete markers[msg.id];
-                }
-                break;
-            default:
-                if (msg.type == 'ID') {
-                    // When we get our ID, render our marker and make it 
-                    // draggable
-                    markers[msg.id] = renderMarker(true, me);
-                    markers[msg.id].addTo(map);
-                    markers[msg.id].on('drag', function () {
-                        me.geometry.coordinates = [markers[msg.id].getLngLat().lng,
-                            markers[msg.id].getLngLat().lat
-                        ];
-                        storeMe(true);
-                    });
-                    markers[msg.id].on('dragend', function () {
-                        me.geometry.coordinates = [markers[msg.id].getLngLat().lng,
-                            markers[msg.id].getLngLat().lat
-                        ];
-                        storeMe(false);
-                    });
-                    me.properties.id = msg.id;
-                    storeMe();
-                    sendViewport();
-                }
-                if (msg.type == 'Feature') {
-                    if (msg.properties.id == me.properties.id) {
-                        return;
-                    }
-                    if (msg.geometry.type == 'Point') {
-                        createMarker(msg.properties.id, msg);
-                    }
-                }
-                if (msg.type == 'Message') {
-                    updateChat(msg);
-                }
-                break;
+        switch (msg.type){
+        case "Update":
+            updateMarker(msg.feature, undefined, true);
+            break;
+        case "Nearby":
+            updateMarker(msg.feature, true, true);
+            break;
+        case "Faraway":
+            updateMarker(msg.feature, false, true);
+            break;
         }
     }
 }
 
-// getMe attempts to retrieve a previously stored location from sessionStorage, 
-// otherwise it generates and sets a new one
-function getMe() {
-    me = JSON.parse(sessionStorage.getItem('location'));
+function randColor() {
+    let r = Math.floor(Math.random() * 128 + 75)
+    let g = Math.floor(Math.random() * 128 + 75)
+    let b = Math.floor(Math.random() * 128 + 75)
+    return '#'+r.toString(16)+g.toString(16)+b.toString(16);
+}
 
+function randID() {
+    let id = '';
+    while (id.length < 24){
+        id += Math.floor(Math.random()*0xFFFFFF).toString(16);
+    }
+    return id.slice(0, 24)
+}
+
+// loadMe attempts to retrieve a previously stored location from sessionStorage, 
+// otherwise it generates and sets a new one
+function loadMe() {
+    me = JSON.parse(sessionStorage.getItem('location'));
     if (!me) {
+        let coords = [
+            -104.99649808 + (Math.random() * 0.01) - 0.005,
+            39.74254437 + (Math.random() * 0.01) - 0.005
+        ];
         me = {
             type: 'Feature',
             geometry: {
                 type: 'Point',
-                coordinates: [-104.9964980827933 + (Math.random() * 0.01) - 0.005,
-                    39.74254437567595 + (Math.random() * 0.01) - 0.005
-                ]
+                coordinates: coords,
             },
+            id: randID(),
             properties: {
-                id: 'Unknown',
-                color: 'rgba(' +
-                    Math.floor(Math.random() * 128 + 50) + ',' +
-                    Math.floor(Math.random() * 128 + 50) + ',' +
-                    Math.floor(Math.random() * 128 + 100) + ',' +
-                    '1.0)',
+                color: randColor(),
+                center: coords,
+                zoom: 14,
             }
         };
-        me.properties.center = me.geometry.coordinates;
-        me.properties.zoom = 14;
+        console.log("created new state", me.id)
+        storeMe()
+    } else {
+        console.log("loaded existing state", me.id)
     }
 }
 
-let last = 0;
-function wssend(msg, throttled) {
-    if (throttled) {
-        let now = new Date();
-        if ((now).getTime() < (last+500)) {
-            return;
-        }
-        last = (now).getTime();
-    }
-    ws.send(msg);
-}
-
-// storeMe stores our current location in sessionStorage and broadcasts it to 
-// the websocket server
-function storeMe(throttled) {
+// storeMe stores our current location in sessionStorage
+function storeMe() {
     let memsg = JSON.stringify(me);
     sessionStorage.setItem('location', memsg);
-    if (!connected) {
-        return;
-    }
-    wssend(memsg, throttled);
 }
 
-function sendViewport(throttled) {
-    if (!connected) {
-        return;
-    }
-    wssend('{"type":"Viewport","data":' + JSON.stringify(map.getBounds()) + '}', throttled);
-}
 
-function calcNearby(roammsg) {
-    let id;
-    let linked = roammsg.nearby;
-
-    // Pick the ID that isn't ours
-    if (roammsg.id == me.properties.id) {
-        if (roammsg.nearby) {
-            id = roammsg.nearby.id;
-        } else {
-            id = roammsg.faraway.id;
-        }
-    } else {
-        id = roammsg.id;
-    }
-
-    let layerName = 'l:' + id;
-    let sourceName = 's:' + id;
-
-    // Add or remove the linking line
-    if (markers[id]) {
-        if (linked) {
-            let data = {
-                'type': 'Feature',
-                'properties': {},
-                'geometry': {
-                    'type': 'LineString',
-                    'coordinates': [
-                        me.geometry.coordinates,
-                        markers[id].person.geometry.coordinates
-                    ]
-                }
+// sendMe send the current client state to the server. When 'throttled' is
+// provided, the operation will ensure that a duplicate state is never sent
+// more than once per 2000ms, and that a new state is never sent more than
+// once per 200ms.
+let lastMsg, lastTS;
+function sendMe(throttled) {
+    let now = new Date().getTime();
+    let send = !throttled;
+    let msg;
+    if (!send){ 
+        if (now > lastTS+maxUpdateFreqeuncy){
+            send = true
+        } else if (now > lastTS+minUpdateFrequency) {
+            msg = JSON.stringify(me); 
+            if (msg != lastMsg){
+                send = true
             }
-            if (map.getSource(sourceName)) {
-                map.getSource(sourceName).setData(data);
-            } else {
-                map.addSource(sourceName, {
-                    type: 'geojson',
-                    data: data,
-                });
-                map.addLayer({
-                    'id': layerName,
-                    'type': 'line',
-                    'source': sourceName,
-                    'layout': {
-                        'line-join': 'round',
-                        'line-cap': 'round'
-                    },
-                    'paint': {
-                        'line-color': '#50C5E3',
-                        'line-width': 3
-                    }
-                });
-            }
-            markers[id].getElement().style.borderColor = '#50C5E3';
-            markers[id].connected = true;
-        } else {
-            if (map.getLayer(layerName)) {
-                map.removeLayer(layerName);
-            }
-            if (map.getSource(sourceName)) {
-                map.removeSource(sourceName);
-            }
-            markers[id].getElement().style.borderColor = null;
-            markers[id].connected = false;
         }
     }
-
-    // Update our marker
-    if (linked) {
-        markers[me.properties.id].getElement().style.borderColor = '#50C5E3';
-        document.getElementById('marker-dot').style.color = '#50C5E3';
-    } else {
-        markers[me.properties.id].getElement().style.borderColor = null;
-        document.getElementById('marker-dot').style.color = null;
+    if (send){
+        //console.log("send state")
+        if (!msg){
+            msg = JSON.stringify(me);
+        }
+        sendMsg(msg);
+        lastMsg = msg;
+        lastTS = now;
     }
 }
 
-function createMarker(id, feature) {
-    if (!markers[id]) {
-        // Create marker if it doesn't currently exist
-        markers[id] = renderMarker(false, feature);
-        markers[id].addTo(map);
-    } else {
-        // Update the marker if it exists
-        markers[id].setLngLat(feature.geometry.coordinates);
-        markers[id].getElement().
-        querySelector('.marker-name').innerText =
-            feature.properties.name ?
-            feature.properties.name :
-            'Anonymous';
+// sendMsg send a message to the server
+function sendMsg(msg) {
+    if (connected){
+        ws.send(msg);
     }
-    markers[id].person = feature;
 }
 
-function renderMarker(isme, person) {
-    let el = document.createElement('div');
-    el.className = 'marker';
-    el.style.backgroundColor = person.properties.color;
-    if (isme) {
-        let ed = document.createElement('input');
-        ed.value = person.properties.name ? person.properties.name : '';
-        ed.type = 'text';
-        ed.placeholder = 'enter your name';
-        ed.id = 'name';
-        ed.autocomplete = 'off';
-        ed.maxLength = 28;
-        ed.onkeypress = ed.onchange = ed.onkeyup = function (ev) {
-            person.properties.name = ed.value.trim();
-            storeMe()
-            if (ev.charCode == 13) {
-                this.blur();
+
+function expireMarkers(){
+    // the oldest markers will always be in the front
+    let now = new Date().getTime();
+    markers.forEach(function(marker, id){
+        if (id != me.id){
+            if (now > marker.timestamp+expires){
+                deleteMarker(id, true)
+            } else if (marker.nearbyTime && now > marker.nearbyTime+expires){
+                updateMarker(marker.feature, false);
             }
         }
-        el.appendChild(ed);
-        el.style.zIndex = 10000;
-        el.style.cursor = 'move';
-        let dot = document.createElement('div');
-        dot.id = 'marker-dot';
-        el.appendChild(dot);
-    } else {
-        let ed = document.createElement('div');
-        ed.className = 'marker-name';
-        ed.innerText =
-            person.properties.name ? person.properties.name : 'Anonymous';
-        el.appendChild(ed);
-    }
-    let newMarker = new mapboxgl.Marker({
-        element: el,
-        draggable: isme
     })
-    newMarker.setLngLat(person.geometry.coordinates);
-    return newMarker;
 }
+
 
 // updateChat updates the chat box to contain any new messages received
 function updateChat(message) {
@@ -380,4 +423,174 @@ function updateChat(message) {
     let chatArea = document.getElementById('chat-messages');
     chatArea.scrollTop = chatArea.scrollHeight - chatArea.clientHeight;
     chatArea.appendChild(messageDiv);
+}
+
+
+// ------ Draw functions ------
+
+function lineDistance(a, b){
+    return Math.sqrt((b.x - a.x) * (b.x - a.x))
+}
+
+function lineAngle(a, b){
+    return Math.atan2(b.y - a.y, b.x - a.x);
+}
+
+function lineDestination(a, angle, dist) {
+    return {
+        x: Math.cos(angle) * dist + a.x,
+        y: Math.sin(angle) * dist + a.y
+    }
+}
+
+function p(x) {
+    return x*window.devicePixelRatio
+}
+
+function markerXY(marker) {
+    let rect = marker.getElement().getBoundingClientRect();
+    return {
+        x: p(rect.left + rect.width/2),
+        y: p(rect.top + rect.height/2)
+    }
+}
+
+// Animation loop for all map drawings
+function draw(time) {
+    requestAnimationFrame(draw);
+    TWEEN.update(time);
+
+    let all = []; // list off all markers with the me-marker at the end.
+    let memarker;
+    // move all base markers in place
+    markers.forEach(function(marker){
+        if (marker.isme) {
+            memarker = marker;
+        } else {
+            all.push(marker);
+        }
+        marker.setLngLat(marker.feature.geometry.coordinates);
+    })
+    all.push(memarker);
+
+    // clear the canvas
+    var ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // draw the connections
+        for (let i=0;i<all.length;i++){
+            drawConnection(ctx, all[i], memarker);
+        }
+    
+    
+    // draw the markers
+    for (let i=0;i<all.length;i++){
+        drawMarker(ctx, all[i], memarker);
+    }
+
+
+}
+
+
+const lineWidth = 4;
+const markerSize = 28;
+
+function drawConnection(ctx, marker, memarker){
+    if (!marker.nearbyFade){
+        return;
+    }
+    
+    const innerSize = markerSize;
+    
+    // get some calcs to the me-marker
+    let a = markerXY(marker);
+    let b = markerXY(memarker);
+    let dist = lineDistance(a, b)
+    let angle = lineAngle(a, b)
+
+    let fadeA = marker.fade*marker.nearbyFade;
+    let fadeB = memarker.fade;
+    
+    let c;
+    ctx.beginPath();
+    ctx.fillStyle = "white";
+
+    let pa1 = lineDestination(a, Math.PI/2+angle, p(innerSize*fadeA/2))
+    let pa2 = lineDestination(a, -Math.PI/2+angle, p(innerSize*fadeA/2))
+    let pa3 = lineDestination(a, angle, p(innerSize*fadeA/2)/2)
+
+    let pb1 = lineDestination(b, -Math.PI/2+angle, p(innerSize*fadeB/2))
+    let pb2 = lineDestination(b, Math.PI/2+angle, p(innerSize*fadeB/2))
+    let pb3 = lineDestination(b, angle-Math.PI, p(innerSize*fadeB/2)/2)
+
+    if (true){
+        ctx.moveTo(pa1.x, pa1.y)
+        ctx.lineTo(pa2.x, pa2.y)
+
+        ctx.bezierCurveTo(pa3.x,pa3.y,pb3.x,pb3.y,pb1.x,pb1.y);
+        ctx.lineTo(pb2.x, pb2.y)
+
+        ctx.bezierCurveTo(pb3.x,pb3.y,pa3.x,pa3.y,pa1.x,pa1.y);
+        // ctx.lineTo(pa2.x, pa2.y)
+    } else {
+        ctx.moveTo(pa1.x, pa1.y)
+        ctx.lineTo(pa2.x, pa2.y)
+        ctx.lineTo(pa3.x, pa3.y)
+        
+        ctx.lineTo(pb3.x, pb3.y)
+        ctx.lineTo(pb2.x, pb2.y)
+        ctx.lineTo(pb1.x, pb1.y)
+        ctx.lineTo(pb3.x, pb3.y)
+
+        ctx.lineTo(pa3.x, pa3.y)
+        ctx.lineTo(pa1.x, pa1.y)
+    }
+    ctx.fill();
+
+}
+
+
+function drawMarker(ctx, marker, memarker){
+    let a = markerXY(marker);
+
+
+
+
+    
+    
+    
+    
+    
+    
+    
+    
+    // draw the marker circle
+
+    let fade = marker.fade; // fade is the fade in/out transition
+
+
+
+    // draw inner stroke
+    ctx.beginPath();
+    ctx.fillStyle = "white";
+    ctx.arc(a.x, a.y, p(markerSize/2)*marker.fade, 0, 2*Math.PI);
+    ctx.fill();
+
+    // draw color overlay
+    ctx.beginPath();
+    ctx.fillStyle = marker.feature.properties.color;
+    ctx.arc(a.x, a.y, p((markerSize-lineWidth*2)/2)*marker.fade, 0, 2*Math.PI);
+    ctx.fill();
+
+    // draw me dot
+    if (marker == memarker){
+        ctx.beginPath();
+        ctx.fillStyle = "white";
+        ctx.arc(a.x, a.y, p(lineWidth)*marker.fade, 0, 2*Math.PI);
+        ctx.fill();
+    }
+
+
+    
+    
 }
