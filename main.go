@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
+	"github.com/paulbellamy/ratecounter"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"github.com/tile38/msgkit"
@@ -68,6 +70,27 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
+var msgCount int64
+var msgSize int64
+
+var mu sync.Mutex
+var counter = ratecounter.NewRateCounter(time.Second)
+
+func send(id, msg string) {
+	counter.Incr(1)
+
+	n := atomic.AddInt64(&msgCount, 1)
+	z := atomic.AddInt64(&msgSize, int64(len(msg)))
+	h.Send(id, msg)
+
+	rate := counter.Rate()
+
+	mu.Lock()
+	fmt.Printf("\rmsg: %d (%d/sec), bytes: %d MB", n, rate, z/1024/1024)
+	mu.Unlock()
+
+}
+
 // geofenceSubscribe listens on geofence channels notifications, piping them out
 // to all connected websocket clients who can see the changes
 func geofenceSubscribe() {
@@ -111,7 +134,7 @@ func geofenceSubscribe() {
 					msg := `{"type":"Update","feature":` + secureFeature(obj.Raw) + `}`
 					h.Range(func(id string) bool {
 						if id != connID {
-							h.Send(id, msg)
+							send(id, msg)
 						}
 						return true
 					})
@@ -127,14 +150,14 @@ func geofenceSubscribe() {
 					nearby := gjson.GetBytes(v.Data, "nearby")
 					if nearby.Exists() {
 						// an object is nearby, notify the target connection
-						h.Send(connID, `{"type":"Nearby",`+
+						send(connID, `{"type":"Nearby",`+
 							`"feature":`+secureFeature(nearby.Get("object").Raw)+`}`)
 						continue
 					}
 					faraway := gjson.GetBytes(v.Data, "faraway")
 					if faraway.Exists() {
 						// an object is faraway, notify the target connection
-						h.Send(connID, `{"type":"Faraway",`+
+						send(connID, `{"type":"Faraway",`+
 							`"feature":`+secureFeature(faraway.Get("object").Raw)+`}`)
 						continue
 					}
@@ -266,7 +289,7 @@ func viewport(id, msg string) {
 		ps, _ := redis.Values(people[1], nil)
 		for _, p := range ps {
 			kv, _ := redis.ByteSlices(p, nil)
-			h.Send(id, string(kv[1]))
+			send(id, string(kv[1]))
 		}
 	}
 }
@@ -301,7 +324,7 @@ func sendAll(msg string, connIDs ...string) {
 		})
 	}
 	for _, connID := range connIDs {
-		h.Send(connID, msg)
+		send(connID, msg)
 	}
 }
 
