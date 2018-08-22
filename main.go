@@ -4,13 +4,15 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
+	"github.com/paulbellamy/ratecounter"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"github.com/tile38/msgkit"
@@ -27,18 +29,19 @@ var (
 )
 
 func main() {
+	var addr string
+	flag.StringVar(&addr, "tile38", ":9851", "Tile38 Address")
+	flag.BoolVar(&metrics, "metrics", false, "Show message metrics")
+	flag.Parse()
+
 	// Create a new pool of connections to Tile38
 	pool = &redis.Pool{
 		MaxIdle:     16,
 		IdleTimeout: 240 * time.Second,
 		Dial: func() (redis.Conn, error) {
-			return redis.Dial("tcp", ":9851")
+			return redis.Dial("tcp", addr)
 		}, TestOnBorrow: func(conn redis.Conn, _ time.Time) error {
-			s, err := redis.String(conn.Do("PING"))
-			if err != nil {
-				return err
-			}
-			if s != "PONG" {
+			if resp, _ := redis.String(conn.Do("PING")); resp != "PONG" {
 				return errors.New("expected PONG")
 			}
 			return nil
@@ -68,25 +71,23 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-// var msgCount int64
-// var msgSize int64
-
-// var mu sync.Mutex
-// var counter = ratecounter.NewRateCounter(time.Second)
+var metrics bool
+var msgMu sync.Mutex
+var msgCount int
+var msgSize uint64
+var msgCounter = ratecounter.NewRateCounter(time.Second)
 
 func send(id, msg string) {
-	// counter.Incr(1)
-
-	// n := atomic.AddInt64(&msgCount, 1)
-	// z := atomic.AddInt64(&msgSize, int64(len(msg)))
 	h.Send(id, msg)
-
-	// rate := counter.Rate()
-
-	// // mu.Lock()
-	// // fmt.Printf("\rmsg: %d (%d/sec), bytes: %d MB", n, rate, z/1024/1024)
-	// // mu.Unlock()
-
+	if metrics {
+		msgMu.Lock()
+		msgCounter.Incr(1)
+		msgCount++
+		msgSize += uint64(len(msg))
+		rate := msgCounter.Rate()
+		fmt.Printf("\rmsg: %d (%d/sec), bytes: %d MB", msgCount, rate, msgSize/1024/1024)
+		msgMu.Unlock()
+	}
 }
 
 // geofenceSubscribe listens on geofence channels notifications, piping them out
@@ -94,7 +95,10 @@ func send(id, msg string) {
 func geofenceSubscribe() {
 	fn := func() error {
 		// Ensure that the roaming geofence channel exists
-		_, err := tile38Do("SETCHAN", "roamchan", "NEARBY", "people", "ROAM", "people", "*", dist)
+		_, err := tile38Do(
+			"SETCHAN", "roamchan",
+			"NEARBY", "people", "ROAM", "people", "*", dist,
+		)
 		if err != nil {
 			return err
 		}
@@ -102,6 +106,7 @@ func geofenceSubscribe() {
 		psc := redis.PubSubConn{Conn: pool.Get()}
 		defer psc.Close()
 
+		// Subscribe to the channel
 		err = psc.Subscribe("roamchan")
 		if err != nil {
 			return err
@@ -153,13 +158,13 @@ func geofenceSubscribe() {
 var connected int32
 
 func onOpen(connID string) {
-	println("open", connID, atomic.AddInt32(&connected, 1))
+	//	println("open", connID, atomic.AddInt32(&connected, 1))
 
 }
 
 // onClose deletes the clients point in the people collection on a disconnect
 func onClose(connID string) {
-	println("close", connID, atomic.AddInt32(&connected, -1))
+	// println("close", connID, atomic.AddInt32(&connected, -1))
 	idmu.Lock()
 	clientID, ok := connClientM[connID]
 	if ok {

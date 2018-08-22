@@ -1,7 +1,7 @@
 // ------ Variables ------
 const expires = 4000;            // markers are auto removed after 5 seconds
-const minUpdateFrequency = 250;  // minimum interval duration for posn updates
-const maxUpdateFrequency = 1500; // maximum interval duration for posn updates
+const minUpdateFrequency = 200;  // minimum interval duration for posn updates
+const maxUpdateFrequency = 1000; // maximum interval duration for posn updates
 const viewportFrequency = 500;   // 
 
 const lineWidth = 4;
@@ -93,6 +93,7 @@ map.on('load', function(){
                 return
             }
             if (connected && message != '') {
+                console.log(message)
                 ws.send(JSON.stringify({
                     type: 'Message',
                     feature: me,

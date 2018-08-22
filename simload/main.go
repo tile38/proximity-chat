@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"log"
 	"math"
 	"math/rand"
@@ -18,9 +19,13 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const frequency = time.Second // gps update frequency
-const spread = 0.03           // in degrees
-const speed = 5               // meters per second
+const (
+	gpsFrequency      = time.Second     // gps update frequency
+	viewportFrequency = time.Second / 2 // viewport request frequency
+	viewportMeters    = 4000            // width and height of viewport
+	spread            = 4000            // random position in meters
+	speed             = 5               // meters per second
+)
 
 var addr string
 var clients int
@@ -52,8 +57,12 @@ func runClient(idx int) {
 		strconv.FormatInt(int64(rand.Float64()*128+75), 16)
 
 	var posnMu sync.Mutex
-	lat := gjson.Get(coords, "1").Float() + (rand.Float64() * spread) - spread/2
-	lng := gjson.Get(coords, "0").Float() + (rand.Float64() * spread) - spread/2
+	lat, lng := destinationPoint(
+		gjson.Get(coords, "1").Float(), gjson.Get(coords, "0").Float(),
+		rand.Float64()*spread, rand.Float64()*math.Pi*2*degrees)
+
+	// lat := gjson.Get(coords, "1").Float() + (rand.Float64() * spread) - spread/2
+	// lng := gjson.Get(coords, "0").Float() + (rand.Float64() * spread) - spread/2
 	time.Sleep(time.Duration(rand.Float64() * float64(time.Second*2)))
 
 	// move the point in the background
@@ -86,19 +95,37 @@ func runClient(idx int) {
 			defer log.Printf("disconnected %d", idx)
 
 			go func() {
+				meTicker := time.NewTicker(gpsFrequency)
+				defer meTicker.Stop()
+				viewportTicker := time.NewTicker(viewportFrequency)
+				defer viewportTicker.Stop()
 				for atomic.LoadInt32(&stop) == 0 {
-					posnMu.Lock()
-					lat1, lng1 := lat, lng
-					posnMu.Unlock()
-
-					me := `{"type": "Feature",
-					"geometry": {"type":"Point","coordinates":[` +
-						strconv.FormatFloat(lng1, 'f', -1, 64) + `,` +
-						strconv.FormatFloat(lat1, 'f', -1, 64) + `]},
-					"id":"` + id + `",
-					"properties":{"color":"` + color + `"}}`
-					ws.WriteMessage(1, []byte(me))
-					time.Sleep(frequency)
+					select {
+					case <-meTicker.C:
+						posnMu.Lock()
+						lat1, lng1 := lat, lng
+						posnMu.Unlock()
+						me := `{"type": "Feature",
+							"geometry": {"type":"Point","coordinates":[` +
+							strconv.FormatFloat(lng1, 'f', -1, 64) + `,` +
+							strconv.FormatFloat(lat1, 'f', -1, 64) + `]},
+							"id":"` + id + `",
+							"properties":{"color":"` + color + `"}}`
+						ws.WriteMessage(1, []byte(me))
+					case <-viewportTicker.C:
+						posnMu.Lock()
+						lat1, lng1 := lat, lng
+						posnMu.Unlock()
+						nLat, _ := destinationPoint(lat1, lng1, viewportMeters/2, 0)
+						_, eLng := destinationPoint(lat1, lng1, viewportMeters/2, 90)
+						sLat, _ := destinationPoint(lat1, lng1, viewportMeters/2, 180)
+						_, wLng := destinationPoint(lat1, lng1, viewportMeters/2, 270)
+						msg := fmt.Sprintf(
+							`{"type":"Viewport","bounds":{"_sw":{"lat":%f,"lng":%f},"_ne":{"lat":%f,"lng":%f}}}`,
+							sLat, wLng, nLat, eLng,
+						)
+						ws.WriteMessage(1, []byte(msg))
+					}
 				}
 			}()
 			for {
