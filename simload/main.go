@@ -18,8 +18,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const frequency = time.Second //time.Millisecond * 200 //time.Second
-const spread = 0.06
+const frequency = time.Second // gps update frequency
+const spread = 0.03           // in degrees
+const speed = 5               // meters per second
 
 var addr string
 var clients int
@@ -43,7 +44,12 @@ func runClient(idx int) {
 	var b [12]byte
 	rand.Read(b[:])
 	id := hex.EncodeToString(b[:])
-	color := "red"
+
+	// random color
+	color := "#" +
+		strconv.FormatInt(int64(rand.Float64()*128+127), 16) +
+		strconv.FormatInt(int64(rand.Float64()*128+95), 16) +
+		strconv.FormatInt(int64(rand.Float64()*128+75), 16)
 
 	var posnMu sync.Mutex
 	lat := gjson.Get(coords, "1").Float() + (rand.Float64() * spread) - spread/2
@@ -52,9 +58,8 @@ func runClient(idx int) {
 
 	// move the point in the background
 	go func() {
-		bearing := rand.Float64() * math.Pi * degrees
+		bearing := rand.Float64() * math.Pi * 2 * degrees
 		tickDur := time.Millisecond * 50
-		speed := 20.0 // 1 meters per second speed
 		tick := time.NewTicker(tickDur)
 		for range tick.C {
 			posnMu.Lock()

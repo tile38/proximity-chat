@@ -1,7 +1,13 @@
 // ------ Variables ------
 const expires = 4000;            // markers are auto removed after 5 seconds
-const minUpdateFrequency = 200;  // minimum interval duration for posn updates
-const maxUpdateFreqeuncy = 1000; // maximum interval duration for posn updates
+const minUpdateFrequency = 250;  // minimum interval duration for posn updates
+const maxUpdateFrequency = 1500; // maximum interval duration for posn updates
+const viewportFrequency = 500;   // 
+
+const lineWidth = 4;
+const messageDotSize = 4;
+const markerSize = 28;
+
 
 let ws; // The websocket connection
 let connected; // Whether or not the websocket is connected
@@ -9,6 +15,8 @@ let me; // Client state including location on the map
 let markers = new Map(); // All markers. Using an ES6 Map for insertion order
 let dragMarker; // The user draggable marker
 let chatInput = document.getElementById('chat-input');
+let hideReady = false;
+let hidden = [];
 
 // ------ DEBUG ------
 
@@ -20,21 +28,9 @@ let chatInput = document.getElementById('chat-input');
 
 // Load or generate the client state
 loadMe();
+loadHidden();
+loadChat();
 
-// Bind the chat input keypress listener to its handler
-chatInput.addEventListener('keypress', function (ev) {
-    if (ev.charCode == 13) {
-        let message = this.value.trim();
-        if (connected && message != '') {
-            ws.send(JSON.stringify({
-                type: 'Message',
-                feature: me,
-                text: message
-            }));
-            this.value = '';
-        }
-    }
-})
 
 // Load the map
 mapboxgl.accessToken = 'pk.eyJ1Ijoic2R3b2xmZTMyIiwiYSI6ImNqa2JxdHcxOTAzMHQza241dmo4NTR6cmwifQ.JP0VMlXnDthDlYp0mVViXA';
@@ -74,10 +70,42 @@ map.on('load', function(){
     // manages the actual throttling.
     setInterval(function(){ sendMe(true); }, 100);
     setInterval(function(){ expireMarkers(); }, 1000);
+    setInterval(function(){ sendViewport(); }, viewportFrequency);
 
-    // output some useful client information
-    displayClientInfo();
 
+    // Bind the chat input keypress listener to its handler
+    chatInput.addEventListener('keypress', function (ev) {
+        let anim = true;
+        if (ev.charCode == 13) {
+            let message = this.value.trim();
+            if (message[0] == '/'){
+                if (message == '/clear'){
+                    clearChat();
+                } else if (message.indexOf('/name')==0){
+                    let name = message.slice(6).trim();
+                    me.properties.name = name;
+                    storeMe();
+                    sendMe();
+                } else if (message == '/hide'){
+                    hideReady = true
+                }
+                this.value = '';
+                return
+            }
+            if (connected && message != '') {
+                ws.send(JSON.stringify({
+                    type: 'Message',
+                    feature: me,
+                    text: message
+                }));
+                this.value = '';
+
+                if (anim){
+                    startMessageAnim(markers.get(me.id))
+                }
+            }
+        }
+    })
 
     // make the canvas display element. All stuff is draw on this layer.
     var container = map.getCanvasContainer();
@@ -97,10 +125,22 @@ map.on('load', function(){
     resize();
 })
 
+// keep the window layout updated
+window.addEventListener('resize', layout);
+layout()
+
 
 
 // ------ Functions ------
+function layout(){
 
+}
+
+
+
+function sendViewport(){
+    sendMsg(JSON.stringify({'type':'Viewport','bounds':map.getBounds()}));
+}
 
 function displayClientInfo(){
     // Continuously update info fields
@@ -136,14 +176,26 @@ function createDragMarker(coords){
     });
     dragMarker.setLngLat(coords);
     dragMarker.addTo(map);
+    el.addEventListener('mouseover', function(){
+        setMarkerOverOut(markers.get(me.id), true, true)
+    })
+    el.addEventListener('mouseout', function(){
+        setMarkerOverOut(markers.get(me.id), false, true)
+    })
 }
 
 
 // createMarker creates a marker and adds it to the markers hashmap. 
 function createMarker(feature, anim){
-    let marker = new mapboxgl.Marker({element: document.createElement('div')})
+    let el = document.createElement('div');
+    el.style.width = '32px';
+    el.style.height = '32px';
+    //el.style.background = 'blue';
+    let marker = new mapboxgl.Marker({element: el})
     marker.isme = feature.id == me.id;
     marker.nearbyFade = 0;
+    marker.messageFades = {};
+    marker.messageFadeIdx = 0;
     if (anim) {
         marker.fade = 0;
         marker.fadeTween = new TWEEN.Tween(0)
@@ -159,6 +211,57 @@ function createMarker(feature, anim){
     marker.setLngLat(feature.geometry.coordinates);
     marker.addTo(map);
     markers.set(feature.id, marker);
+    el.addEventListener('mouseover', function(){
+        setMarkerOverOut(marker, true, true)
+    })
+    el.addEventListener('mouseout', function(){
+        setMarkerOverOut(marker, false, true)
+    })
+    el.addEventListener('click', function(){
+        if (hideReady){
+            storeHide(marker);
+            hideReady = false;
+        }
+    })
+
+    for (var i=0;i<hidden.length;i++){
+        if (hidden[i] == feature.id){
+            marker.hidden = true;
+            break;
+        }
+    }
+}
+
+
+window.addEventListener('click', function(){
+    if (hideReady){
+        console.log("hide canceled");
+        hideReady = false;
+    }
+})
+
+function setMarkerOverOut(marker, over, anim){
+    if (anim){
+        if (marker.overTween){
+            marker.overTween.stop();
+            delete marker.overTween;
+        }
+        var from = {v:marker.overFade}
+        var to = {v:over?1:0}
+        var ease = over?TWEEN.Easing.Quadratic.In:TWEEN.Easing.Quadratic.Out;
+        marker.overTween = new TWEEN.Tween(from)
+        .to(to, 300)
+        .easing(ease)
+        .onUpdate(function(){
+            marker.overFade = from.v;
+        }).start();
+    }else{
+        if (over){
+            maker.overFade = 1;
+        }else{
+            maker.overFade = 0;
+        }
+    }
 }
 
 // updateMarker updates or creates a new marker based on the feature position.
@@ -196,7 +299,7 @@ function updateMarker(feature, nearby, anim){
     }
 
     if (anim){
-        const dur = 200;
+        const dur = 600;
         let from = {v:marker.nearbyFade};
         let to, ease;
         if (nearby){
@@ -262,13 +365,14 @@ function setMarkerFeature(marker, feature, anim){
         lng: feature.geometry.coordinates[0],
         lat: feature.geometry.coordinates[1],
     }
-    
+    marker.feature.properties.name = feature.properties.name
     if (anim){
+        const dur = 400;
         if (coords.lng == to.lng && coords.lat == to.lat){
             return;
         }
         marker.moveTween = new TWEEN.Tween(coords)
-            .to(to, minUpdateFrequency*2)
+            .to(to, dur)
             .easing(TWEEN.Easing.Linear.None)
             .onUpdate(function() {
                 marker.feature.geometry.coordinates[0] = coords.lng;
@@ -296,13 +400,19 @@ function openWS() {
         let msg = JSON.parse(e.data);
         switch (msg.type){
         case "Update":
-            updateMarker(msg.feature, undefined, true);
+            for (let i=0;i<msg.features.length;i++){
+                updateMarker(msg.features[i], undefined, true);
+            }
             break;
         case "Nearby":
             updateMarker(msg.feature, true, true);
             break;
         case "Faraway":
             updateMarker(msg.feature, false, true);
+            break;
+        case "Message":
+            updateChat(msg.feature, msg.text, true);
+            storeChat(msg.feature, msg.text)
             break;
         }
     }
@@ -369,7 +479,7 @@ function sendMe(throttled) {
     let send = !throttled;
     let msg;
     if (!send){ 
-        if (now > lastTS+maxUpdateFreqeuncy){
+        if (now > lastTS+maxUpdateFrequency){
             send = true
         } else if (now > lastTS+minUpdateFrequency) {
             msg = JSON.stringify(me); 
@@ -397,6 +507,8 @@ function sendMsg(msg) {
 }
 
 
+
+
 function expireMarkers(){
     // the oldest markers will always be in the front
     let now = new Date().getTime();
@@ -411,25 +523,146 @@ function expireMarkers(){
     })
 }
 
-
 // updateChat updates the chat box to contain any new messages received
-function updateChat(message) {
-    let messageDiv = document.createElement('div');
-    let b = document.createElement('b');
-    b.style = "color:" + message.feature.properties.color + ";";
-    b.innerText = message.feature.properties.name;
-    messageDiv.appendChild(b);
-    messageDiv.insertAdjacentText('beforeend', ' : ' + message.text);
+function updateChat(feature, text, anim) {
+    for (var i=0;i<hidden.length;i++){
+        if (feature.id == hidden[i]){
+            return;
+        }
+    }
+    let el = document.createElement('div');
+    el.style.width = '100%';
+    el.style.margin = '5px 0';
+
+    let dotCanvas = document.createElement('canvas');
+    let dotSize = 20;
+    dotCanvas.width = dotSize*2;
+    dotCanvas.height = dotSize*2;
+    dotCanvas.style.width = dotSize+'px';
+    dotCanvas.style.height = dotSize+'px';
+    dotCanvas.style.display = 'inline';
+    dotCanvas.style.marginRight = '5px';
+    drawMarkerDot(dotCanvas.getContext('2d'), dotSize, dotSize, dotSize, 3, 
+        feature.properties.color, 1, false);
+    el.appendChild(dotCanvas);
+
+
+    let textEl = document.createElement('span');
+
+    if (feature.properties.name){
+        let nameEl = document.createElement('span');
+        nameEl.style.fontSize = '17px';
+        nameEl.style.position = 'relative';
+        nameEl.style.top = '-3px';
+        nameEl.style.fontWeight = 'bold';
+        nameEl.innerText = feature.properties.name+": ";
+        el.appendChild(nameEl);
+        
+    }
+
+    textEl.innerText = text;
+    textEl.style.fontSize = '17px';
+    textEl.style.position = 'relative';
+    textEl.style.top = '-3px';
+    el.appendChild(textEl);
+
+    
+
+    // add to message box
     let chatArea = document.getElementById('chat-messages');
+    chatArea.appendChild(el);
+    if (chatArea.autoScroll){
+        chatArea.scrollTop = chatArea.scrollHeight - chatArea.clientHeight;
+    }
+
+    if (anim){
+        let marker = markers.get(feature.id)
+        if (!marker) {
+            return;
+        }
+        startMessageAnim(marker)
+    }
+}
+
+
+function loadHidden(){
+    hidden = sessionStorage.getItem('hidden');
+    if (!hidden) {
+        hidden = [];
+    } else {
+        hidden = JSON.parse(hidden);
+    }
+}
+
+function storeHide(marker){
+    marker.hidden = true;
+    hidden.push(marker.feature.id);
+    sessionStorage.setItem('hidden', JSON.stringify(hidden));
+
+    document.getElementById('chat-messages').innerHTML = '';
+    loadChat();
+}
+
+function storeChat(feature, text){
+    var idx = parseInt(sessionStorage.getItem('chat-count'))||0;
+    sessionStorage.setItem('chat-'+idx+'-feature', JSON.stringify(feature));
+    sessionStorage.setItem('chat-'+idx+'-text', text)
+    sessionStorage.setItem('chat-count', idx+1);
+}
+
+function loadChat(){
+    let chatArea = document.getElementById('chat-messages');
+    chatArea.addEventListener("scroll", function(){
+        chatArea.autoScroll = 
+            chatArea.scrollTop == chatArea.scrollHeight - chatArea.clientHeight;
+    })
+    var count = parseInt(sessionStorage.getItem('chat-count'))||0;
+nextText:
+    for (var i=0;i<count;i++){
+        let feature = JSON.parse(sessionStorage.getItem('chat-'+i+'-feature'));
+        for (var j=0;j<hidden.length;j++){
+            if (feature.id == hidden[j]){
+                continue nextText;
+            }
+        }
+        let text = sessionStorage.getItem('chat-'+i+'-text');
+        updateChat(feature, text, false);
+    }
     chatArea.scrollTop = chatArea.scrollHeight - chatArea.clientHeight;
-    chatArea.appendChild(messageDiv);
+    chatArea.autoScroll = true;
+}
+
+function clearChat(){
+    sessionStorage.setItem('chat-count', 0);
+    document.getElementById('chat-messages').innerHTML = '';
+
+}
+
+function startMessageAnim(marker){
+    let idx = marker.messageFadeIdx;
+    marker.messageFadeIdx++;
+    marker.messageFades[idx] = 0;
+    new TWEEN.Tween(0)
+        .to(1, 600)
+        .easing(TWEEN.Easing.Quadratic.Out)
+        .onUpdate(function(v) {
+            marker.messageFades[idx] = v;
+        })
+        .onComplete(function(){
+            delete marker.messageFades[idx];
+        })
+        .start();
 }
 
 
 // ------ Draw functions ------
 
 function lineDistance(a, b){
-    return Math.sqrt((b.x - a.x) * (b.x - a.x))
+    var a1 = a.x - b.x;
+    var b1 = a.y - b.y;
+
+    return Math.sqrt( a1*a1 + b1*b1 );
+    //return Math.sqrt((b.x - a.x) * (b.y - a.y))
 }
 
 function lineAngle(a, b){
@@ -466,6 +699,8 @@ function draw(time) {
     markers.forEach(function(marker){
         if (marker.isme) {
             memarker = marker;
+        } else if (marker.hidden){
+            return;
         } else {
             all.push(marker);
         }
@@ -477,23 +712,55 @@ function draw(time) {
     var ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // draw the connections
-        for (let i=0;i<all.length;i++){
-            drawConnection(ctx, all[i], memarker);
-        }
-    
-    
+    // draw the label text
+    for (let i=0;i<all.length;i++){
+        drawLabel(ctx, all[i], false);
+    }
+
+    // draw the connections
+    for (let i=0;i<all.length;i++){
+        drawConnection(ctx, all[i], memarker);
+    }
+
+    // draw the message dots
+    for (let i=0;i<all.length;i++){
+        drawMessageDot(ctx, all[i], memarker);
+    }
+
     // draw the markers
     for (let i=0;i<all.length;i++){
         drawMarker(ctx, all[i], memarker);
     }
 
-
+    // draw the overlay label text
+    for (let i=0;i<all.length;i++){
+        drawLabel(ctx, all[i], true);
+    }
 }
 
+function drawLabel(ctx, marker, overlay){
+    if (overlay&&!marker.overFade){
+        return
+    }
+    let text = marker.feature.properties.name
+    if (!text){
+        return;
+    }
+    let labelSize = 20;
+    let a = markerXY(marker);
+    ctx.font = "bold "+(labelSize*marker.fade*window.devicePixelRatio)+"px Sans-Serif";
+    let measure = ctx.measureText(text)
 
-const lineWidth = 4;
-const markerSize = 28;
+    if (overlay){
+        ctx.fillStyle = 'rgba(47,64,75,'+(marker.overFade)+')'
+        //ctx.strokeStyle = 'rgba(255,255,255,'+(0.5*marker.overFade)+')'
+        //ctx.lineWidth = p(lineWidth)/1.8;
+        //ctx.strokeText(text, a.x-measure.width/2, a.y-(markerSize+lineWidth*3)*marker.fade);    
+    }else{
+        ctx.fillStyle = '#809bad';
+    }
+    ctx.fillText(text, a.x-measure.width/2, a.y-(markerSize+lineWidth*3)*marker.fade);
+}
 
 function drawConnection(ctx, marker, memarker){
     if (!marker.nearbyFade){
@@ -505,7 +772,6 @@ function drawConnection(ctx, marker, memarker){
     // get some calcs to the me-marker
     let a = markerXY(marker);
     let b = markerXY(memarker);
-    let dist = lineDistance(a, b)
     let angle = lineAngle(a, b)
 
     let fadeA = marker.fade*marker.nearbyFade;
@@ -523,74 +789,91 @@ function drawConnection(ctx, marker, memarker){
     let pb2 = lineDestination(b, Math.PI/2+angle, p(innerSize*fadeB/2))
     let pb3 = lineDestination(b, angle-Math.PI, p(innerSize*fadeB/2)/2)
 
-    if (true){
-        ctx.moveTo(pa1.x, pa1.y)
-        ctx.lineTo(pa2.x, pa2.y)
+    ctx.moveTo(pa1.x, pa1.y)
+    ctx.lineTo(pa2.x, pa2.y)
 
-        ctx.bezierCurveTo(pa3.x,pa3.y,pb3.x,pb3.y,pb1.x,pb1.y);
-        ctx.lineTo(pb2.x, pb2.y)
+    ctx.bezierCurveTo(pa3.x,pa3.y,pb3.x,pb3.y,pb1.x,pb1.y);
+    ctx.lineTo(pb2.x, pb2.y)
 
-        ctx.bezierCurveTo(pb3.x,pb3.y,pa3.x,pa3.y,pa1.x,pa1.y);
-        // ctx.lineTo(pa2.x, pa2.y)
-    } else {
-        ctx.moveTo(pa1.x, pa1.y)
-        ctx.lineTo(pa2.x, pa2.y)
-        ctx.lineTo(pa3.x, pa3.y)
-        
-        ctx.lineTo(pb3.x, pb3.y)
-        ctx.lineTo(pb2.x, pb2.y)
-        ctx.lineTo(pb1.x, pb1.y)
-        ctx.lineTo(pb3.x, pb3.y)
-
-        ctx.lineTo(pa3.x, pa3.y)
-        ctx.lineTo(pa1.x, pa1.y)
-    }
+    ctx.bezierCurveTo(pb3.x,pb3.y,pa3.x,pa3.y,pa1.x,pa1.y);
     ctx.fill();
+}
+
+function drawMessageDot(ctx, marker, memarker){
+    if (!marker.nearbyFade){
+        return;
+    }
+
+    let a = markerXY(marker);
+    let b = markerXY(memarker);
+    let dist = lineDistance(a, b)
+    let angle = lineAngle(a, b)
+
+    for (var idx in memarker.messageFades){
+        let fade = memarker.messageFades[idx];
+
+        var p4 = lineDestination(b, angle-Math.PI, dist*fade);
+        ctx.beginPath();
+        ctx.fillStyle = "white";
+        ctx.arc(p4.x, p4.y, p(messageDotSize+2)*marker.fade*marker.nearbyFade, 0, 2*Math.PI);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.fillStyle = memarker.feature.properties.color;
+        ctx.arc(p4.x, p4.y, p(messageDotSize)*marker.fade*marker.nearbyFade, 0, 2*Math.PI);
+        ctx.fill();
+
+    }
+
+
+    for (var idx in marker.messageFades){
+        let fade = marker.messageFades[idx];
+
+        var p4 = lineDestination(a, angle, dist*fade);
+        ctx.beginPath();
+        ctx.fillStyle = "white";
+        ctx.arc(p4.x, p4.y, p(messageDotSize+2)*marker.fade*marker.nearbyFade, 0, 2*Math.PI);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.fillStyle = marker.feature.properties.color;
+        ctx.arc(p4.x, p4.y, p(messageDotSize)*marker.fade*marker.nearbyFade, 0, 2*Math.PI);
+        ctx.fill();
+
+    }
+
 
 }
 
 
+
+
 function drawMarker(ctx, marker, memarker){
     let a = markerXY(marker);
+    drawMarkerDot(ctx, a.x, a.y,
+        markerSize, lineWidth,
+        marker.feature.properties.color, marker.fade, 
+        marker == memarker);
+}
 
-
-
-
-    
-    
-    
-    
-    
-    
-    
-    
-    // draw the marker circle
-
-    let fade = marker.fade; // fade is the fade in/out transition
-
-
-
+function drawMarkerDot(ctx, x, y, markerSize, lineWidth, color, fade, isme){
     // draw inner stroke
     ctx.beginPath();
     ctx.fillStyle = "white";
-    ctx.arc(a.x, a.y, p(markerSize/2)*marker.fade, 0, 2*Math.PI);
+    ctx.arc(x, y, p(markerSize/2)*fade, 0, 2*Math.PI);
     ctx.fill();
 
     // draw color overlay
     ctx.beginPath();
-    ctx.fillStyle = marker.feature.properties.color;
-    ctx.arc(a.x, a.y, p((markerSize-lineWidth*2)/2)*marker.fade, 0, 2*Math.PI);
+    ctx.fillStyle = color;
+    ctx.arc(x, y, p((markerSize-lineWidth*2)/2)*fade, 0, 2*Math.PI);
     ctx.fill();
 
     // draw me dot
-    if (marker == memarker){
+    if (isme){
         ctx.beginPath();
         ctx.fillStyle = "white";
-        ctx.arc(a.x, a.y, p(lineWidth)*marker.fade, 0, 2*Math.PI);
+        ctx.arc(x, y, p(lineWidth)*fade, 0, 2*Math.PI);
         ctx.fill();
     }
-
-
-    
-    
 }

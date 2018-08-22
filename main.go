@@ -4,7 +4,6 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -12,13 +11,12 @@ import (
 	"time"
 
 	"github.com/gomodule/redigo/redis"
-	"github.com/paulbellamy/ratecounter"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"github.com/tile38/msgkit"
 )
 
-const dist = 1000
+const dist = 1000 //1000
 
 var (
 	pool        *redis.Pool       // The Tile38 connection pool
@@ -70,24 +68,24 @@ func main() {
 	log.Fatal(srv.ListenAndServe())
 }
 
-var msgCount int64
-var msgSize int64
+// var msgCount int64
+// var msgSize int64
 
-var mu sync.Mutex
-var counter = ratecounter.NewRateCounter(time.Second)
+// var mu sync.Mutex
+// var counter = ratecounter.NewRateCounter(time.Second)
 
 func send(id, msg string) {
-	counter.Incr(1)
+	// counter.Incr(1)
 
-	n := atomic.AddInt64(&msgCount, 1)
-	z := atomic.AddInt64(&msgSize, int64(len(msg)))
+	// n := atomic.AddInt64(&msgCount, 1)
+	// z := atomic.AddInt64(&msgSize, int64(len(msg)))
 	h.Send(id, msg)
 
-	rate := counter.Rate()
+	// rate := counter.Rate()
 
-	mu.Lock()
-	fmt.Printf("\rmsg: %d (%d/sec), bytes: %d MB", n, rate, z/1024/1024)
-	mu.Unlock()
+	// // mu.Lock()
+	// // fmt.Printf("\rmsg: %d (%d/sec), bytes: %d MB", n, rate, z/1024/1024)
+	// // mu.Unlock()
 
 }
 
@@ -95,13 +93,8 @@ func send(id, msg string) {
 // to all connected websocket clients who can see the changes
 func geofenceSubscribe() {
 	fn := func() error {
-		var err error
-		// Ensure that the geofence channels exist
-		_, err = tile38Do("SETCHAN", "worldchan", "INTERSECTS", "people", "BOUNDS", -90, -180, 90, 180)
-		if err != nil {
-			return err
-		}
-		_, err = tile38Do("SETCHAN", "roamchan", "NEARBY", "people", "ROAM", "people", "*", dist)
+		// Ensure that the roaming geofence channel exists
+		_, err := tile38Do("SETCHAN", "roamchan", "NEARBY", "people", "ROAM", "people", "*", dist)
 		if err != nil {
 			return err
 		}
@@ -109,35 +102,18 @@ func geofenceSubscribe() {
 		psc := redis.PubSubConn{Conn: pool.Get()}
 		defer psc.Close()
 
-		err = psc.PSubscribe("viewport:*", "worldchan", "roamchan")
+		err = psc.Subscribe("roamchan")
 		if err != nil {
 			return err
 		}
 
-		log.Printf("psubscribe: opened")
-		defer log.Printf("psubscribe: closed")
+		log.Printf("subscribe: opened")
+		defer log.Printf("subscribe: closed")
+
 		for {
 			switch v := psc.Receive().(type) {
 			case redis.Message:
-				switch v.Pattern {
-				case "viewport:*":
-				case "worldchan":
-					obj := gjson.GetBytes(v.Data, "object")
-					if !obj.Exists() {
-						// feature not available
-						continue
-					}
-					clientID := obj.Get("id").String()
-					idmu.Lock()
-					connID := clientConnM[clientID]
-					idmu.Unlock()
-					msg := `{"type":"Update","feature":` + secureFeature(obj.Raw) + `}`
-					h.Range(func(id string) bool {
-						if id != connID {
-							send(id, msg)
-						}
-						return true
-					})
+				switch v.Channel {
 				case "roamchan":
 					clientID := gjson.GetBytes(v.Data, "object.id").String()
 					idmu.Lock()
@@ -162,40 +138,6 @@ func geofenceSubscribe() {
 						continue
 					}
 				}
-
-				// msg := string(v.Data)
-				// switch {
-				// case gjson.Get(msg, "hook").String():
-
-				// }
-				// command := gjson.Get(msg, "command").String()
-				// if command == "set" || command == "del" {
-				// 	// Send any viewport notifications to only listening viewport
-				// 	hook := gjson.Get(msg, "hook").String()
-				// 	if strings.Contains(hook, "viewport:") {
-				// 		sendAll(msg, strings.Split(hook, ":")[1])
-				// 		continue
-				// 	}
-				// 	// Send any roaming to all listening for roaming
-				// 	if strings.Contains(hook, "roamchan") {
-				// 		sendAll(msg)
-				// 		continue
-				// 	}
-				// 	// // Send all other update notifications to those who can see it
-				// 	// res, err := redis.Values(tile38Do(
-				// 	// 	"INTERSECTS", "viewport", "IDS", "GET", "people", gjson.Get(msg, "id").String(),
-				// 	// ))
-				// 	// if err != nil {
-				// 	// 	return err
-				// 	// }
-				// 	// if len(res) > 1 {
-				// 	// 	ids, _ := redis.Strings(res[1], nil)
-
-				// 	// 	sendAll(msg, ids...)
-				// 	// }
-				// } else {
-				// 	sendAll(msg)
-				// }
 			case error:
 				return v
 			}
@@ -227,8 +169,6 @@ func onClose(connID string) {
 	idmu.Unlock()
 	if ok {
 		tile38Do("DEL", "people", clientID)
-		tile38Do("DEL", "viewport", clientID)
-		tile38Do("DELCHAN", "viewport:"+clientID)
 	}
 }
 
@@ -268,28 +208,50 @@ func secureClientID(clientID string) string {
 // viewport is a websocket message handler that queries Tile38 for all people
 // currently in a clients viewport
 func viewport(id, msg string) {
-	swLat := gjson.Get(msg, "data._sw.lat").Float()
-	swLng := gjson.Get(msg, "data._sw.lng").Float()
-	neLat := gjson.Get(msg, "data._ne.lat").Float()
-	neLng := gjson.Get(msg, "data._ne.lng").Float()
 
-	// Create the viewport bounds and geofence in Tile38
-	tile38Do("SET", "viewport", id, "EX", 30, "BOUNDS", swLat, swLng,
-		neLat, neLng)
+	swLat := gjson.Get(msg, "bounds._sw.lat").Float()
+	swLng := gjson.Get(msg, "bounds._sw.lng").Float()
+	neLat := gjson.Get(msg, "bounds._ne.lat").Float()
+	neLng := gjson.Get(msg, "bounds._ne.lng").Float()
 
-	tile38Do("SETCHAN", "viewport:"+id, "WITHIN", "people", "FENCE",
-		"DETECT", "exit", "BOUNDS", swLat, swLng, neLat, neLng)
+	var cursor int64
+	for {
+		// Query for all people in the viewport bounds
+		people, _ := redis.Values(tile38Do(
+			"INTERSECTS", "people",
+			"CURSOR", cursor,
+			"BOUNDS", swLat, swLng, neLat, neLng,
+		))
+		if len(people) < 2 {
+			return
+		}
+		cursor, _ = redis.Int64(people[0], nil)
 
-	// Query for all people in the viewport bounds
-	people, _ := redis.Values(tile38Do("INTERSECTS", "people", "GET", "viewport",
-		id))
+		idmu.Lock()
+		clientID := connClientM[id]
+		idmu.Unlock()
 
-	// Send all people in the viewport to the messager
-	if len(people) > 1 {
+		// Send all people in the viewport to the messager
+		var features []byte
+		var idx int
+		features = append(features, `{"type":"Update","features":[`...)
 		ps, _ := redis.Values(people[1], nil)
 		for _, p := range ps {
-			kv, _ := redis.ByteSlices(p, nil)
-			send(id, string(kv[1]))
+			strs, _ := redis.Strings(p, nil)
+			if len(strs) > 1 && strs[0] != clientID {
+				feature := secureFeature(strs[1])
+				if idx > 0 {
+					features = append(features, ',')
+				}
+				features = append(features, feature...)
+				idx++
+			}
+		}
+		features = append(features, `]}`...)
+		send(id, string(features))
+
+		if cursor == 0 {
+			break
 		}
 	}
 }
@@ -297,34 +259,36 @@ func viewport(id, msg string) {
 // message is a websocket message handler that queries Tile38 for other users
 // located in the messagers geofence and broadcasts a chat message to them
 func message(id, msg string) {
-	feature := gjson.Get(msg, "feature").String()
+	// create a new message
+	nmsg := `{"type":"Message"}`
+	nmsg, _ = sjson.SetRaw(nmsg, "feature", secureFeature(gjson.Get(msg, "feature").String()))
+	nmsg, _ = sjson.Set(nmsg, "text", gjson.Get(msg, "text").String())
 
 	// Query all nearby people from Tile38
-	nearbyRes, err := redis.Values(tile38Do("NEARBY", "people", "IDS", "POINT",
-		gjson.Get(feature, "geometry.coordinates.1").Float(),
-		gjson.Get(feature, "geometry.coordinates.0").Float(), dist))
-	if err != nil {
-		log.Printf("message: %v\n", err)
-		return
-	}
-
-	if len(nearbyRes) > 1 {
-		// Send the message to all nearby people
-		nearby, _ := redis.Strings(nearbyRes[1], nil)
-		sendAll(string(msg), nearby...)
-	}
-}
-
-// sendAll sends the passed websocket message to all connection IDs passed
-func sendAll(msg string, connIDs ...string) {
-	if len(connIDs) == 0 {
-		h.Range(func(id string) bool {
-			connIDs = append(connIDs, id)
-			return true
-		})
-	}
-	for _, connID := range connIDs {
-		send(connID, msg)
+	lat := gjson.Get(msg, "feature.geometry.coordinates.1").Float()
+	lng := gjson.Get(msg, "feature.geometry.coordinates.0").Float()
+	var cursor int64
+	for {
+		people, _ := redis.Values(
+			tile38Do(
+				"NEARBY", "people", "CURSOR", 0, "IDS", "POINT", lat, lng, dist,
+			),
+		)
+		if len(people) < 2 {
+			return
+		}
+		cursor, _ = redis.Int64(people[0], nil)
+		ps, _ := redis.Values(people[1], nil)
+		for _, p := range ps {
+			clientID, _ := redis.String(p, nil)
+			idmu.Lock()
+			connID := clientConnM[clientID]
+			idmu.Unlock()
+			send(connID, nmsg)
+		}
+		if cursor == 0 {
+			break
+		}
 	}
 }
 
