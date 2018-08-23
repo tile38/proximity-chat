@@ -489,7 +489,7 @@ function setMarkerFeature(marker, feature, anim){
 
 // openWS creates a websocket connection to our GO geolocation service
 function openWS() {
-    ws = new WebSocket('ws://' + location.host + '/ws');
+    ws = new WebSocket((location.protocol=='https:'?'wss:':'ws:')+'//' + location.host + '/ws');
     ws.onopen = function () {
         console.log("socket opened")
         connected = true;
