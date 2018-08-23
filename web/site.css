@@ -3,13 +3,19 @@ body, html {
     margin: 0;
     padding: 0;
     height: 100%;
+    max-height: 100%;
     width: 100%;
     font-size: 15px;
     overflow: hidden;
     font-family: 'Roboto', sans-serif;
     background-color: #CAD5DD;
 }
-
+body{
+    position: absolute;
+}
+* {
+    box-sizing: border-box;
+}
 textarea, select, input, button {
     outline: none;
 }
@@ -22,19 +28,18 @@ textarea, select, input, button {
     position: absolute;
 }
 
-.title {
-    padding: 20px 20px 8px 20px;
-    font-weight: 900;
-    text-transform: uppercase;
-}
-
-
 .box {
     z-index: 10;
-    background: #E3E9ED;
+    _background: rgba(227,233,237,0.6);
+    background: rgba(227,233,237,1);
     color: #2F404B;
     display: flex;
     flex-direction: column;
+}
+
+.mapboxgl-ctrl-top-right{
+    margin-top: 4px;
+    margin-right: 4px;
 }
 
 .green-left {
@@ -100,5 +105,40 @@ textarea, select, input, button {
 
 ::placeholder {
     color: #BBC1C4;
+}
+
+.chat-text {
+    color: #2F404B;
+}
+
+
+
+@media only screen and (max-width: 640px) {
+    .box {
+        background:transparent;
+        pointer-events: none;
+    }
+    .box.left {
+        position: absolute;
+        top: 0px;
+        left: 0px;
+        bottom: 34px;
+    }
+    .box.quarter {
+        max-width: 100%;
+        min-width: 100%;
+    }
+    
+    .box>.input {
+        pointer-events: auto;
+    }
+    
+
+    .mapboxgl-ctrl-top-right{
+        margin-top: 74px;
+        margin-right: 4px;
+    }
+    
+
 }
 

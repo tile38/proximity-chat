@@ -14,6 +14,7 @@ let connected; // Whether or not the websocket is connected
 let me; // Client state including location on the map
 let markers = new Map(); // All markers. Using an ES6 Map for insertion order
 let dragMarker; // The user draggable marker
+let nameInput;
 let chatInput = document.getElementById('chat-input');
 let hideReady = false;
 let hidden = [];
@@ -59,6 +60,7 @@ map.on('load', function(){
     // create the transparent draggable marker
     createDragMarker(me.geometry.coordinates);
     createMarker(me, true);
+    createNameInput();
 
     // establish the socket connection with the server
     openWS();
@@ -108,13 +110,41 @@ map.on('load', function(){
         }
     })
 
+    // add gps control
+
+    let gc = new mapboxgl.GeolocateControl({
+        position: 'top-left',
+        positionOptions: {
+            enableHighAccuracy: true
+        },
+        trackUserLocation: true,
+        showUserLocation: false
+    });
+    
+    gc.on('geolocate', function (loc) {
+        me.geometry.coordinates = [loc.coords.longitude, loc.coords.latitude];
+        dragMarker.setLngLat(me.geometry.coordinates);
+        storeMe();
+        sendMe();
+        
+    });
+    gc.on('trackuserlocationstart', function() {
+        dragMarker.dragDisabled = true;
+    });
+    gc.on('trackuserlocationend', function() {
+        dragMarker.dragDisabled = false;
+    });
+    
+    // Add geolocate control to the map.
+    map.addControl(gc)
+
     // make the canvas display element. All stuff is draw on this layer.
-    var container = map.getCanvasContainer();
+    let container = map.getCanvasContainer();
     canvas = document.createElement("canvas");
     canvas.style.position = 'absolute';
     container.appendChild(canvas);
     let resize = function(){
-        var mcanvas = map.getCanvas();
+        let mcanvas = map.getCanvas();
         canvas.width = mcanvas.width;
         canvas.height = mcanvas.height;
         canvas.style.width = mcanvas.offsetWidth+"px";
@@ -126,16 +156,27 @@ map.on('load', function(){
     resize();
 })
 
-// keep the window layout updated
-window.addEventListener('resize', layout);
-layout()
+// window.addEventListener('mousemove', function(ev){
+//     let rect = nameEl.getBoundingClientRect();
+//     if (
+//         ev.clientY > rect.top && 
+//         ev.clientY < rect.top+rect.height && 
+//         ev.clientX > rect.left && 
+//         ev.clientX < rect.left+rect.width
+//     ){
+//         nameEl.style.opacity = 1.0
+//     } else {
+//         nameEl.style.opacity = 0.5
+//     }
+
+    
+//     // console.log(, ev.clientY, rect.left, rect.top)
+// });
+
 
 
 
 // ------ Functions ------
-function layout(){
-
-}
 
 
 
@@ -155,6 +196,65 @@ function displayClientInfo(){
 
 
 
+function createNameInput(){
+    nameEl = document.createElement("div")
+    return;
+    nameEl.innerHTML = '<input type="text" id="name-input">'
+    nameEl.style.position = 'absolute'
+    nameEl.style.zIndex = 5;
+    nameEl.style.height = '30px';
+    document.body.appendChild(nameEl);
+    nameEl.addEventListener('mouseover', function(){
+        console.log(123)
+    })
+    nameEl.addEventListener('mouseblur', function(){
+        console.log(456)
+    })
+
+    let nameInput = document.getElementById('name-input');
+    nameInput.maxLength = 15;
+    nameInput.style.textAlign = 'center';
+    nameInput.style.display = 'block';
+    nameInput.style.font = 'bold '+ (20)+'px Sans-Serif';
+    nameInput.style.color = 'transparent';
+    nameInput.style.caretColor = 'black';
+    nameInput.style.height = '30px';
+    nameInput.style.background = 'transparent';
+    nameInput.style.border = 0;
+    nameInput.style.margin = 0;
+    nameInput.style.padding = 0;
+    nameInput.addEventListener('focus', function(){
+        markers.get(me.id).overFade = 1
+        nameInput.returnVal = me.properties.name;
+        nameInput.value = '';
+        me.properties.name = '';
+        nameInput.watchI = setInterval(function(){
+            let nval = nameInput.value.trim();
+            if (nval != me.properties.name){
+                me.properties.name = nval;
+                nameInput.returnVal = me.properties.name;
+                storeMe();
+                sendMe();
+            }
+        }, 10);
+    })
+    nameInput.addEventListener('blur', function(){
+        markers.get(me.id).overFade = 0;
+        me.properties.name = nameInput.returnVal;
+        clearInterval(nameInput.watchI);
+    })
+    nameInput.addEventListener('keypress', function(ev){
+        if (ev.keyCode == 13){
+            if (nameInput.value == ''){
+                me.properties.name = '';
+                nameInput.returnVal = me.properties.name;
+                storeMe();
+                sendMe();
+            }
+            nameInput.blur();
+        }
+    })
+}
 
 
 // createDragMarker creates a transparent marker that tracks the users dot
@@ -170,6 +270,9 @@ function createDragMarker(coords){
         draggable: true
     })
     dragMarker.on('drag', function () {
+        if (dragMarker.dragDisabled){
+            return;
+        }
         let coords = dragMarker.getLngLat();
         let marker = markers.get(me.id);
         me.geometry.coordinates = [coords.lng, coords.lat];
@@ -225,7 +328,7 @@ function createMarker(feature, anim){
         }
     })
 
-    for (var i=0;i<hidden.length;i++){
+    for (let i=0;i<hidden.length;i++){
         if (hidden[i] == feature.id){
             marker.hidden = true;
             break;
@@ -247,9 +350,9 @@ function setMarkerOverOut(marker, over, anim){
             marker.overTween.stop();
             delete marker.overTween;
         }
-        var from = {v:marker.overFade}
-        var to = {v:over?1:0}
-        var ease = over?TWEEN.Easing.Quadratic.In:TWEEN.Easing.Quadratic.Out;
+        let from = {v:marker.overFade}
+        let to = {v:over?1:0}
+        let ease = over?TWEEN.Easing.Quadratic.In:TWEEN.Easing.Quadratic.Out;
         marker.overTween = new TWEEN.Tween(from)
         .to(to, 300)
         .easing(ease)
@@ -336,7 +439,7 @@ function deleteMarker(id, anim) {
             marker.fadeTween.stop();
             delete marker.fadeTween;
         }
-        var o = {v:marker.fade}
+        let o = {v:marker.fade}
         new TWEEN.Tween(o).to({v:0}, 800)
         .easing(TWEEN.Easing.Exponential.Out)
         .onUpdate(function() {
@@ -358,11 +461,11 @@ function setMarkerFeature(marker, feature, anim){
         marker.moveTween.stop();
         delete marker.moveTween;
     }
-    var coords = {
+    let coords = {
         lng: marker.feature.geometry.coordinates[0],
         lat: marker.feature.geometry.coordinates[1],
     }
-    var to = {
+    let to = {
         lng: feature.geometry.coordinates[0],
         lat: feature.geometry.coordinates[1],
     }
@@ -526,27 +629,29 @@ function expireMarkers(){
 
 // updateChat updates the chat box to contain any new messages received
 function updateChat(feature, text, anim) {
-    for (var i=0;i<hidden.length;i++){
+    for (let i=0;i<hidden.length;i++){
         if (feature.id == hidden[i]){
             return;
         }
     }
     let el = document.createElement('div');
+    el.className = 'chat-text'
     el.style.width = '100%';
     el.style.margin = '5px 0';
 
     let dotCanvas = document.createElement('canvas');
     let dotSize = 20;
-    dotCanvas.width = dotSize*2;
-    dotCanvas.height = dotSize*2;
+    dotCanvas.width = dotSize*window.devicePixelRatio;
+    dotCanvas.height = dotSize*window.devicePixelRatio;
     dotCanvas.style.width = dotSize+'px';
     dotCanvas.style.height = dotSize+'px';
     dotCanvas.style.display = 'inline';
     dotCanvas.style.marginRight = '5px';
-    drawMarkerDot(dotCanvas.getContext('2d'), dotSize, dotSize, dotSize, 3, 
+    drawMarkerDot(dotCanvas.getContext('2d'), 
+        dotSize*window.devicePixelRatio/2, dotSize*window.devicePixelRatio/2, 
+        dotSize, 3, 
         feature.properties.color, 1, false);
     el.appendChild(dotCanvas);
-
 
     let textEl = document.createElement('span');
 
@@ -605,7 +710,7 @@ function storeHide(marker){
 }
 
 function storeChat(feature, text){
-    var idx = parseInt(sessionStorage.getItem('chat-count'))||0;
+    let idx = parseInt(sessionStorage.getItem('chat-count'))||0;
     sessionStorage.setItem('chat-'+idx+'-feature', JSON.stringify(feature));
     sessionStorage.setItem('chat-'+idx+'-text', text)
     sessionStorage.setItem('chat-count', idx+1);
@@ -617,11 +722,11 @@ function loadChat(){
         chatArea.autoScroll = 
             chatArea.scrollTop == chatArea.scrollHeight - chatArea.clientHeight;
     })
-    var count = parseInt(sessionStorage.getItem('chat-count'))||0;
+    let count = parseInt(sessionStorage.getItem('chat-count'))||0;
 nextText:
-    for (var i=0;i<count;i++){
+    for (let i=0;i<count;i++){
         let feature = JSON.parse(sessionStorage.getItem('chat-'+i+'-feature'));
-        for (var j=0;j<hidden.length;j++){
+        for (let j=0;j<hidden.length;j++){
             if (feature.id == hidden[j]){
                 continue nextText;
             }
@@ -659,8 +764,8 @@ function startMessageAnim(marker){
 // ------ Draw functions ------
 
 function lineDistance(a, b){
-    var a1 = a.x - b.x;
-    var b1 = a.y - b.y;
+    let a1 = a.x - b.x;
+    let b1 = a.y - b.y;
 
     return Math.sqrt( a1*a1 + b1*b1 );
     //return Math.sqrt((b.x - a.x) * (b.y - a.y))
@@ -694,6 +799,8 @@ function draw(time) {
     requestAnimationFrame(draw);
     TWEEN.update(time);
 
+    
+
     let all = []; // list off all markers with the me-marker at the end.
     let memarker;
     // move all base markers in place
@@ -710,7 +817,7 @@ function draw(time) {
     all.push(memarker);
 
     // clear the canvas
-    var ctx = canvas.getContext("2d");
+    let ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // draw the label text
@@ -737,6 +844,13 @@ function draw(time) {
     for (let i=0;i<all.length;i++){
         drawLabel(ctx, all[i], true);
     }
+    
+    let a = markerXY(memarker);
+    let mr = memarker.getElement().getBoundingClientRect();
+    nameEl.style.top = (mr.top - nameEl.offsetHeight) + 'px';
+    nameEl.style.left = ((mr.left + mr.width/2) - nameEl.offsetWidth/2) + 'px';
+
+
 }
 
 function drawLabel(ctx, marker, overlay){
@@ -760,7 +874,7 @@ function drawLabel(ctx, marker, overlay){
     }else{
         ctx.fillStyle = '#809bad';
     }
-    ctx.fillText(text, a.x-measure.width/2, a.y-(markerSize+lineWidth*3)*marker.fade);
+    ctx.fillText(text, a.x-measure.width/2, a.y-(markerSize+p(5))*marker.fade);
 }
 
 function drawConnection(ctx, marker, memarker){
@@ -810,10 +924,10 @@ function drawMessageDot(ctx, marker, memarker){
     let dist = lineDistance(a, b)
     let angle = lineAngle(a, b)
 
-    for (var idx in memarker.messageFades){
+    for (let idx in memarker.messageFades){
         let fade = memarker.messageFades[idx];
 
-        var p4 = lineDestination(b, angle-Math.PI, dist*fade);
+        let p4 = lineDestination(b, angle-Math.PI, dist*fade);
         ctx.beginPath();
         ctx.fillStyle = "white";
         ctx.arc(p4.x, p4.y, p(messageDotSize+2)*marker.fade*marker.nearbyFade, 0, 2*Math.PI);
@@ -823,14 +937,12 @@ function drawMessageDot(ctx, marker, memarker){
         ctx.fillStyle = memarker.feature.properties.color;
         ctx.arc(p4.x, p4.y, p(messageDotSize)*marker.fade*marker.nearbyFade, 0, 2*Math.PI);
         ctx.fill();
-
     }
 
-
-    for (var idx in marker.messageFades){
+    for (let idx in marker.messageFades){
         let fade = marker.messageFades[idx];
 
-        var p4 = lineDestination(a, angle, dist*fade);
+        let p4 = lineDestination(a, angle, dist*fade);
         ctx.beginPath();
         ctx.fillStyle = "white";
         ctx.arc(p4.x, p4.y, p(messageDotSize+2)*marker.fade*marker.nearbyFade, 0, 2*Math.PI);
@@ -840,14 +952,8 @@ function drawMessageDot(ctx, marker, memarker){
         ctx.fillStyle = marker.feature.properties.color;
         ctx.arc(p4.x, p4.y, p(messageDotSize)*marker.fade*marker.nearbyFade, 0, 2*Math.PI);
         ctx.fill();
-
     }
-
-
 }
-
-
-
 
 function drawMarker(ctx, marker, memarker){
     let a = markerXY(marker);
