@@ -1,8 +1,7 @@
 {
     "type": "Feature",
     "properties": {
-        "id": "colorodo-convention-center",
-        "name": "Colorodo Convention Center"
+        "origin": [-104.996520280838,39.74251256255334]
     },
     "geometry": {
         "type": "Polygon",

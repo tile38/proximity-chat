@@ -1,12 +1,12 @@
 // ------ Variables ------
 const expires = 4000;            // markers are auto removed after 5 seconds
 const minUpdateFrequency = 200;  // minimum interval duration for posn updates
-const maxUpdateFrequency = 1000; // maximum interval duration for posn updates
+const maxUpdateFrequency = 1500; // maximum interval duration for posn updates
 const viewportFrequency = 500;   // 
 
 const lineWidth = 4;
 const messageDotSize = 4;
-const markerSize = 28;
+const markerSize = 32;
 
 
 let ws; // The websocket connection
@@ -18,6 +18,18 @@ let nameInput;
 let chatInput = document.getElementById('chat-input');
 let hideReady = false;
 let hidden = [];
+let mcanvas;
+
+let staticGeofenceFill = '#690505';
+let staticGeofenceLine = '#725a5d';
+
+
+// let staticGeofenceData = './fences/convention-center.geojson';
+// let origin = [-104.99649808, 39.74254437];
+
+let staticGeofenceData = './fences/galvanize.geojson';
+let origin = [-112.06693857908249,33.439893220138416]
+
 
 // ------ DEBUG ------
 
@@ -128,13 +140,45 @@ map.on('load', function(){
         sendMe();
         
     });
+    
     gc.on('trackuserlocationstart', function() {
         dragMarker.dragDisabled = true;
     });
+
     gc.on('trackuserlocationend', function() {
         dragMarker.dragDisabled = false;
     });
+
+    //let data = "./fences/convention-center.geojson"
     
+
+
+    map.addLayer({
+        "id": "static-geofence-fill",
+        'type': 'fill',
+        'source': {
+            'type': 'geojson',
+            'data': staticGeofenceData,
+        },
+        "paint": {
+            'fill-color': staticGeofenceFill,
+            'fill-opacity': 0.25
+        }
+    });
+    map.addLayer({
+        "id": "static-geofence-line",
+        'type': 'line',
+        'source': {
+            'type': 'geojson',
+            'data': staticGeofenceData,
+        },
+        "paint": {
+            'line-color': staticGeofenceLine,
+            'line-opacity': 1,
+            'line-width': lineWidth
+        }
+    });
+
     // Add geolocate control to the map.
     map.addControl(gc)
 
@@ -144,7 +188,7 @@ map.on('load', function(){
     canvas.style.position = 'absolute';
     container.appendChild(canvas);
     let resize = function(){
-        let mcanvas = map.getCanvas();
+        mcanvas = map.getCanvas();
         canvas.width = mcanvas.width;
         canvas.height = mcanvas.height;
         canvas.style.width = mcanvas.offsetWidth+"px";
@@ -269,7 +313,7 @@ function createDragMarker(coords){
         element: el,
         draggable: true
     })
-    dragMarker.on('drag', function () {
+    dragMarker.on('drag', function (ev) {
         if (dragMarker.dragDisabled){
             return;
         }
@@ -403,7 +447,7 @@ function updateMarker(feature, nearby, anim){
     }
 
     if (anim){
-        const dur = 600;
+        const dur = 300;
         let from = {v:marker.nearbyFade};
         let to, ease;
         if (nearby){
@@ -518,7 +562,30 @@ function openWS() {
             updateChat(msg.feature, msg.text, true);
             storeChat(msg.feature, msg.text)
             break;
+        case "Inside":
+             if (!msg.me){
+                updateMarker(msg.feature, undefined, true);
+                updateStatic(msg.feature.id, true)
+            } else {
+                updateStatic(me.id, true)
+            }
+            break;
+        case "Outside":
+            if (!msg.me){
+                updateMarker(msg.feature, undefined, true);
+                updateStatic(msg.feature.id, false)
+            } else {
+                updateStatic(me.id, false)
+            }
+            break;
         }
+    }
+}
+
+function updateStatic(id, inside){
+    let marker = markers.get(id)
+    if (marker){
+        marker.staticInside = inside;
     }
 }
 
@@ -543,8 +610,8 @@ function loadMe() {
     me = JSON.parse(sessionStorage.getItem('location'));
     if (!me) {
         let coords = [
-            -104.99649808 + (Math.random() * 0.01) - 0.005,
-            39.74254437 + (Math.random() * 0.01) - 0.005
+            origin[0] + (Math.random() * 0.01) - 0.005,
+            origin[1] + (Math.random() * 0.01) - 0.005
         ];
         me = {
             type: 'Feature',
@@ -556,7 +623,7 @@ function loadMe() {
             properties: {
                 color: randColor(),
                 center: coords,
-                zoom: 14,
+                zoom: 15,
             }
         };
         console.log("created new state", me.id)
@@ -882,7 +949,7 @@ function drawConnection(ctx, marker, memarker){
         return;
     }
     
-    const innerSize = markerSize;
+    const innerSize = markerSize*.75;
     
     // get some calcs to the me-marker
     let a = markerXY(marker);
@@ -894,7 +961,7 @@ function drawConnection(ctx, marker, memarker){
     
     let c;
     ctx.beginPath();
-    ctx.fillStyle = "white";
+    ctx.fillStyle = "rgba(255,255,255,0.5)";
 
     let pa1 = lineDestination(a, Math.PI/2+angle, p(innerSize*fadeA/2))
     let pa2 = lineDestination(a, -Math.PI/2+angle, p(innerSize*fadeA/2))
@@ -957,10 +1024,15 @@ function drawMessageDot(ctx, marker, memarker){
 
 function drawMarker(ctx, marker, memarker){
     let a = markerXY(marker);
-    drawMarkerDot(ctx, a.x, a.y,
-        markerSize, lineWidth,
-        marker.feature.properties.color, marker.fade, 
-        marker == memarker);
+    let color = marker.feature.properties.color;
+    if (marker.staticInside){
+        drawGopher(ctx, a.x, a.y, color, marker.fade, marker == memarker)
+    }else {
+        drawMarkerDot(ctx, a.x, a.y,
+            markerSize, lineWidth,
+            color, marker.fade, 
+            marker == memarker);
+    }
 }
 
 function drawMarkerDot(ctx, x, y, markerSize, lineWidth, color, fade, isme){
@@ -983,4 +1055,33 @@ function drawMarkerDot(ctx, x, y, markerSize, lineWidth, color, fade, isme){
         ctx.arc(x, y, p(lineWidth)*fade, 0, 2*Math.PI);
         ctx.fill();
     }
+}
+
+var img = new Image;
+img.src = "gopher.png";
+
+
+function drawGopher(ctx, x, y, color, fade, isme){
+    let width = p(markerSize*1.1)*fade;
+    let height = p((markerSize*1.1/img.width)*img.height)*fade;
+
+    // draw bg
+    ctx.beginPath();
+    ctx.fillStyle = color;
+    ctx.moveTo(x-width/2+width*0.1,y-height/2+height*0.1)
+    ctx.lineTo(x+width/2-width*0.1,y-height/2+height*0.1)
+    ctx.lineTo(x+width/2-width*0.15,y+height/2-height*0.1)
+    ctx.lineTo(x-width/2+width*0.15,y+height/2-height*0.1)
+    ctx.fill();
+
+    ctx.drawImage(img, x-width/2, y-height/2, width, height);
+
+    // // draw me dot
+    // if (isme){
+    //     ctx.beginPath();
+    //     ctx.fillStyle = "white";
+    //     ctx.arc(x, y+height/6, p(lineWidth/2)*fade, 0, 2*Math.PI);
+    //     ctx.fill();
+    // }
+    
 }

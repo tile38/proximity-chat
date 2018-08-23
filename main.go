@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"sync"
@@ -18,7 +19,7 @@ import (
 	"github.com/tile38/msgkit"
 )
 
-const dist = 1000 //1000
+const dist = 500
 
 var (
 	pool        *redis.Pool       // The Tile38 connection pool
@@ -26,7 +27,15 @@ var (
 	idmu        sync.Mutex        // guard maps
 	connClientM map[string]string // clientID -> connID map
 	clientConnM map[string]string // connID -> clientID map
+
 )
+var staticGeofenceObject = func() string {
+	data, err := ioutil.ReadFile("web/fences/" + "galvanize.geojson")
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}()
 
 func main() {
 	var addr string
@@ -95,47 +104,70 @@ func send(id, msg string) {
 func geofenceSubscribe() {
 	fn := func() error {
 		// Ensure that the roaming geofence channel exists
-		_, err := tile38Do(
-			"SETCHAN", "roamchan",
+		if _, err := tile38Do(
+			"SETCHAN", "roam-chan",
 			"NEARBY", "people", "ROAM", "people", "*", dist,
-		)
-		if err != nil {
+		); err != nil {
 			return err
 		}
 
-		psc := redis.PubSubConn{Conn: pool.Get()}
-		defer psc.Close()
+		if _, err := tile38Do(
+			"SETCHAN", "static-chan",
+			"WITHIN", "people", "DETECT", "enter,inside,exit", "OBJECT", staticGeofenceObject,
+		); err != nil {
+			return err
+		}
 
 		// Subscribe to the channel
-		err = psc.Subscribe("roamchan")
-		if err != nil {
+		psc := redis.PubSubConn{Conn: pool.Get()}
+		defer psc.Close()
+		if err := psc.Subscribe("roam-chan", "static-chan"); err != nil {
 			return err
 		}
 
-		log.Printf("subscribe: opened")
-		defer log.Printf("subscribe: closed")
-
+		// for each pub/sub message
 		for {
 			switch v := psc.Receive().(type) {
 			case redis.Message:
+				// Received a geofence notification
+				msg := string(v.Data)
+				clientID := gjson.Get(msg, "object.id").String()
+				idmu.Lock()
+				connID := clientConnM[clientID] // get the connection from the id
+				idmu.Unlock()
+
 				switch v.Channel {
-				case "roamchan":
-					clientID := gjson.GetBytes(v.Data, "object.id").String()
-					idmu.Lock()
-					connID := clientConnM[clientID]
-					idmu.Unlock()
-					if connID == "" {
-						// connection not found
+				case "static-chan":
+					var outMsg string
+					switch gjson.Get(msg, "detect").String() {
+					case "enter", "inside":
+						outMsg = `{"type":"Inside","feature":` +
+							secureFeature(gjson.Get(msg, "object").Raw) + `}`
+					case "exit":
+						outMsg = `{"type":"Outside","feature":` +
+							secureFeature(gjson.Get(msg, "object").Raw) + `}`
+					default:
 						continue
 					}
-					nearby := gjson.GetBytes(v.Data, "nearby")
+
+					h.Range(func(id string) bool {
+						if id == connID {
+							send(id, outMsg[:len(outMsg)-1]+`,"me":true}`)
+						} else {
+							send(id, outMsg)
+						}
+						return true
+					})
+
+				case "roam-chan":
+					nearby := gjson.Get(msg, "nearby")
 					if nearby.Exists() {
 						// an object is nearby, notify the target connection
 						send(connID, `{"type":"Nearby",`+
 							`"feature":`+secureFeature(nearby.Get("object").Raw)+`}`)
 						continue
 					}
-					faraway := gjson.GetBytes(v.Data, "faraway")
+					faraway := gjson.Get(msg, "faraway")
 					if faraway.Exists() {
 						// an object is faraway, notify the target connection
 						send(connID, `{"type":"Faraway",`+

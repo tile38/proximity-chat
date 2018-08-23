@@ -23,8 +23,8 @@ const (
 	gpsFrequency      = time.Second     // gps update frequency
 	viewportFrequency = time.Second / 2 // viewport request frequency
 	viewportMeters    = 4000            // width and height of viewport
-	spread            = 4000            // random position in meters
-	speed             = 5               // meters per second
+	spread            = 1500            // random position in meters
+	speed             = 2.5             // meters per second
 )
 
 var addr string
