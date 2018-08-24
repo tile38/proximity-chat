@@ -20,8 +20,8 @@ let hideReady = false;
 let hidden = [];
 let mcanvas;
 
-let staticGeofenceFill = '#690505';
-let staticGeofenceLine = '#725a5d';
+let staticGeofenceFill = '#acd049' // '#690505';
+let staticGeofenceLine = '#acd049' // '#725a5d';
 
 
 // let staticGeofenceData = './fences/convention-center.geojson';
