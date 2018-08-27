@@ -24,11 +24,11 @@ let staticGeofenceFill = '#acd049' // '#690505';
 let staticGeofenceLine = '#acd049' // '#725a5d';
 
 
-// let staticGeofenceData = './fences/convention-center.geojson';
-// let origin = [-104.99649808, 39.74254437];
+let staticGeofenceData = './fences/convention-center.geojson';
+let origin = [-104.99649808, 39.74254437];
 
-let staticGeofenceData = './fences/galvanize.geojson';
-let origin = [-112.06693857908249,33.439893220138416]
+// let staticGeofenceData = './fences/galvanize.geojson';
+// let origin = [-112.06693857908249,33.439893220138416];
 
 
 // ------ DEBUG ------

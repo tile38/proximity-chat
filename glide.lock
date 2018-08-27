@@ -1,25 +1,25 @@
 hash: 808fc4b81540640ca6294a6cbfd815f1cc83cdb192abf6eb90a4f33c37c456df
-updated: 2018-08-16T10:30:35.164535-07:00
+updated: 2018-08-26T18:37:34.495863-07:00
 imports:
 - name: github.com/gomodule/redigo
   version: 2cd21d9966bf7ff9ae091419744f0b3fb0fecace
   subpackages:
   - internal
   - redis
-- name: github.com/gorilla/context
-  version: 08b5f424b9271eedf6f9f0ce86cb9396ed337a42
-- name: github.com/gorilla/mux
-  version: e48e440e4c92e3251d812f8ce7858944dfa3331c
 - name: github.com/gorilla/websocket
-  version: 5ed622c449da6d44c3c8329331ff47a9e5844f71
-- name: github.com/satori/go.uuid
-  version: 36e9d2ebbde5e3f13ab2e25625fd453271d6522e
+  version: 66b9c49e59c6c48f0ffce28c2d8b8a5678502c6d
+- name: github.com/paulbellamy/ratecounter
+  version: a803f0e4f07116687bb30965e8f7d0c32981b63c
 - name: github.com/tidwall/gjson
   version: 1e3f6aeaa5bad08d777ea7807b279a07885dd8b2
 - name: github.com/tidwall/match
   version: 1731857f09b1f38450e2c12409748407822dc6be
-- name: github.com/tile38/msgkit
-  version: ec56dc2406a36f343ff2ff248b5d704cad51fda5
+- name: github.com/tidwall/sjson
+  version: 6a22caf2fd45d5e2119bfc3717e984f15a7eb7ee
+- name: github.com/tidwall/tile38
+  version: 3a6f366955abdc4ef7e9887ba81c011448099ba3
   subpackages:
-  - safews
+  - pkg/geojson/geo
+- name: github.com/tile38/msgkit
+  version: cd35bb7e8b02c18768e79dfe0816928d4d9c73a4
 testImports: []

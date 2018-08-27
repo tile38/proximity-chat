@@ -30,7 +30,7 @@ var (
 
 )
 var staticGeofenceObject = func() string {
-	data, err := ioutil.ReadFile("web/fences/" + "galvanize.geojson")
+	data, err := ioutil.ReadFile("web/fences/" + "convention-center.geojson")
 	if err != nil {
 		panic(err)
 	}
