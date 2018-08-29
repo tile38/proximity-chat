@@ -188,13 +188,18 @@ map.on('load', function(){
     canvas.style.position = 'absolute';
     container.appendChild(canvas);
     let resize = function(){
-        mcanvas = map.getCanvas();
+        let boxel = document.getElementById('chatbox');
+        let mapel = document.getElementById('map');
+        mapel.style.left = boxel.offsetWidth+'px';
+        mapel.style.width = (document.body.offsetWidth-boxel.offsetWidth)+'px';
+
+        mcanvas = map.getCanvas();  
         canvas.width = mcanvas.width;
         canvas.height = mcanvas.height;
-        canvas.style.width = mcanvas.offsetWidth+"px";
-        canvas.style.height = mcanvas.offsetHeight+"px";
-        canvas.style.top = mcanvas.offsetTop+"px";
-        canvas.style.left = mcanvas.offsetLeft+"px";
+        canvas.style.width = mapel.offsetWidth+"px";
+        canvas.style.height = mapel.offsetHeight+"px";
+        canvas.style.top = mapel.offsetTop+"px";
+        canvas.style.left = mapel.offsetLeft+"px";
     }
     window.addEventListener('resize', resize);
     resize();
