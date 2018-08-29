@@ -21,14 +21,13 @@ textarea, select, input, button {
 }
 
 #map {
-    position: absolute;
-    top: 0px;
-    left: 0px;
-    width: 100%;
+    float: right;
+    width: 80%;
     height: 100%;
 }
 
 .box {
+    float:left;
     z-index: 10;
     position: relative;
     _background: rgba(227,233,237,0.6);
@@ -48,7 +47,7 @@ textarea, select, input, button {
 }
 
 .box.quarter {
-    width: 200px;
+    width: 20%;
 }
 
 .box.left {
@@ -57,6 +56,12 @@ textarea, select, input, button {
 
 .box>.mast {
     background: #fff;
+}
+
+.box>.mast .tag{
+    text-align: center;
+    position: relative;
+    top: -10px;
 }
 
 .logo {
@@ -102,9 +107,14 @@ textarea, select, input, button {
 }
 
 
-
 @media only screen and (max-width: 640px) {
+    #map {
+        width: 100%;
+        height: 100%;
+    }
+    
     .box {
+        display: none;
         background:transparent;
         pointer-events: none;
     }
@@ -118,17 +128,12 @@ textarea, select, input, button {
         max-width: 100%;
         min-width: 100%;
     }
-    
     .box>.input {
         pointer-events: auto;
     }
-    
-
-    .mapboxgl-ctrl-top-right{
+    /* .mapboxgl-ctrl-top-right{
         margin-top: 74px;
         margin-right: 4px;
-    }
-    
-
+    } */
 }
-
+ 

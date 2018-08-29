@@ -26,6 +26,7 @@ let staticGeofenceLine = '#acd049' // '#725a5d';
 
 let staticGeofenceData = './fences/convention-center.geojson';
 let origin = [-104.99649808, 39.74254437];
+let bounds = [-104.99938488006592, 39.74012836540008, -104.99406337738036, 39.74481418327878];
 
 // let staticGeofenceData = './fences/galvanize.geojson';
 // let origin = [-112.06693857908249,33.439893220138416];
@@ -185,21 +186,20 @@ map.on('load', function(){
     // make the canvas display element. All stuff is draw on this layer.
     let container = map.getCanvasContainer();
     canvas = document.createElement("canvas");
+    //canvas.style.border = '1px solid red'
     canvas.style.position = 'absolute';
     container.appendChild(canvas);
     let resize = function(){
         let boxel = document.getElementById('chatbox');
         let mapel = document.getElementById('map');
-        mapel.style.left = boxel.offsetWidth+'px';
-        mapel.style.width = (document.body.offsetWidth-boxel.offsetWidth)+'px';
-
+        // mapel.style.left = boxel.offsetWidth+'px';
+        // mapel.style.width = (document.body.offsetWidth-boxel.offsetWidth)+'px';
         mcanvas = map.getCanvas();  
-        canvas.width = mcanvas.width;
-        canvas.height = mcanvas.height;
+        canvas.width = mapel.offsetWidth * window.devicePixelRatio;
+        canvas.height = mapel.offsetHeight * window.devicePixelRatio;
         canvas.style.width = mapel.offsetWidth+"px";
         canvas.style.height = mapel.offsetHeight+"px";
         canvas.style.top = mapel.offsetTop+"px";
-        canvas.style.left = mapel.offsetLeft+"px";
     }
     window.addEventListener('resize', resize);
     resize();
@@ -609,25 +609,34 @@ function randID() {
     return id.slice(0, 24)
 }
 
+function randCoords() {
+    while (true){
+         let coords = [
+            origin[0] + (Math.random() * 0.005) - 0.0025,
+            origin[1] + (Math.random() * 0.005) - 0.0025
+        ];
+        if (coords[0]<bounds[0]||coords[0]>bounds[2]||
+            coords[1]<bounds[1]||coords[1]>bounds[3]){
+            return coords;
+         }
+    }
+}
+
 // loadMe attempts to retrieve a previously stored location from sessionStorage, 
 // otherwise it generates and sets a new one
 function loadMe() {
     me = JSON.parse(sessionStorage.getItem('location'));
     if (!me) {
-        let coords = [
-            origin[0] + (Math.random() * 0.01) - 0.005,
-            origin[1] + (Math.random() * 0.01) - 0.005
-        ];
         me = {
             type: 'Feature',
             geometry: {
                 type: 'Point',
-                coordinates: coords,
+                coordinates: randCoords(),
             },
             id: randID(),
             properties: {
                 color: randColor(),
-                center: coords,
+                center: origin,
                 zoom: 15,
             }
         };
@@ -860,8 +869,10 @@ function p(x) {
 
 function markerXY(marker) {
     let rect = marker.getElement().getBoundingClientRect();
+    let mapel = document.getElementById('map');
+    
     return {
-        x: p(rect.left + rect.width/2),
+        x: p(rect.left + rect.width/2 - mapel.offsetLeft),
         y: p(rect.top + rect.height/2)
     }
 }
@@ -966,7 +977,8 @@ function drawConnection(ctx, marker, memarker){
     
     let c;
     ctx.beginPath();
-    ctx.fillStyle = "rgba(255,255,255,0.5)";
+    //ctx.fillStyle = "rgba(255,255,255,0.5)";
+    ctx.fillStyle = "rgba(255,255,255,1)";
 
     let pa1 = lineDestination(a, Math.PI/2+angle, p(innerSize*fadeA/2))
     let pa2 = lineDestination(a, -Math.PI/2+angle, p(innerSize*fadeA/2))
