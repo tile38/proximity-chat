@@ -47,10 +47,12 @@ loadChat();
 
 
 // Load the map
-mapboxgl.accessToken = 'pk.eyJ1Ijoic2R3b2xmZTMyIiwiYSI6ImNqa2JxdHcxOTAzMHQza241dmo4NTR6cmwifQ.JP0VMlXnDthDlYp0mVViXA';
+// mapboxgl.accessToken = 'pk.eyJ1Ijoic2R3b2xmZTMyIiwiYSI6ImNqa2JxdHcxOTAzMHQza241dmo4NTR6cmwifQ.JP0VMlXnDthDlYp0mVViXA';
+mapboxgl.accessToken = 'pk.eyJ1IjoidGlkd2FsbCIsImEiOiJjams3Z21yZDUxZXg1M2tuYzhhcHUyOWZnIn0.9KIyO_Az2Ui8_k13m7Fw_g';
 let map = new mapboxgl.Map({
     container: 'map',
-    style: 'mapbox://styles/sdwolfe32/cjkvl0av304r42sphvsm0odyw',
+    style: 'mapbox://styles/mapbox/light-v9',
+    // style: 'mapbox://styles/sdwolfe32/cjkvl0av304r42sphvsm0odyw',
     center: me.properties.center,
     zoom: me.properties.zoom,
     keyboard: false,
