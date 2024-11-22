@@ -23,6 +23,8 @@ Open up another browser window and drag it's marker near the first marker.
 
 Now chat.
 
-<img width="600" alt="image" src="https://github.com/user-attachments/assets/ad5ac3a9-9e16-4316-9574-e14c55dfa51d">
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/ba38c3bf-fad8-4de0-897c-87942413a3f6">
+
+
 
 
