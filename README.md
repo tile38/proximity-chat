@@ -5,7 +5,7 @@ are within 200 meters of you. It works with the help of
 [Tile38](https://github.com/tidwall/tile38).
 
 
-[Video Presentation](https://www.youtube.com/watch?v=fVoML1vAW2c&t=15s) at GopherCon 2018.
+[Video Presentation](https://www.youtube.com/watch?v=fVoML1vAW2c&t=102s) at GopherCon 2018.
 
 ## Running
 
